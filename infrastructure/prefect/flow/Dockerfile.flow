@@ -1,0 +1,32 @@
+FROM prefecthq/prefect:3.4.1-python3.12
+
+WORKDIR /app
+
+# 1) Dependências de sistema base
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential libpq-dev gcc git jq curl netcat-openbsd && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2) Configuração e instalação do Poetry
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    PYTHONPATH=/app \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_HOME="/usr/local" \
+    POETRY_VERSION=2.1.1
+
+RUN curl -sSL https://install.python-poetry.org | python3 -
+ENV PATH="/usr/local/bin:$PATH"
+
+# 3) Copia arquivos de dependência e instala usando Poetry
+COPY pyproject.toml poetry.lock* ./
+
+# Instala apenas as dependências listadas em [tool.poetry.dependencies]
+RUN poetry install --only main --no-ansi --no-root --sync
+
+# 4) Copia todo o código do projeto para o diretório de trabalho /app
+COPY . .

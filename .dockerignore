@@ -1,0 +1,23 @@
+# /var/www/pipeboard/.dockerignore
+**/.git
+**/.pytest_cache
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.venv/
+*.egg-info/
+build/
+dist/
+*.db
+*.sqlite3
+tests/
+
+# Documentação e arquivos de texto não essenciais para o runtime
+README.md
+docs/
+pipeboard_content.json
+pipeboard_tree.txt  
+
+# Logs
+*.log

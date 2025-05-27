@@ -1,0 +1,15 @@
+FROM prefecthq/prefect:3.4.1-python3.12
+
+WORKDIR /app
+
+COPY pyproject.toml poetry.lock* ./
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    pip install --no-cache-dir "prefect-docker>=0.6" structlog && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY . /app/
+
+COPY infrastructure/prefect/worker/run_worker_with_metrics.py /app/run_worker_with_metrics.py
+CMD ["python", "/app/run_worker_with_metrics.py"]

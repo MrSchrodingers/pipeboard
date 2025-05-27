@@ -1,0 +1,36 @@
+FROM prefecthq/prefect:3.4.1-python3.12
+
+WORKDIR /app
+
+# 1. Dependências de sistema + Docker client
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential libpq-dev curl gcc netcat-openbsd git jq docker.io && \
+    pip install --no-cache-dir structlog python-dotenv "prefect-docker>=0.6" && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2. Poetry
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    PYTHONPATH=/app \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_HOME='/usr/local' \
+    POETRY_VERSION=2.1.1
+RUN curl -sSL https://install.python-poetry.org | python3 -
+
+# 3. Instala dependências do projeto
+COPY pyproject.toml poetry.lock* ./
+RUN poetry install --only main --no-ansi --no-root
+
+# 4. Copia TODO o código do projeto
+COPY . .
+
+# 5. Copia scripts de utilidade para o contêiner de setup
+COPY docker/scripts/wait-for-it.sh /app/wait-for-it.sh
+COPY docker/scripts/entrypoint-setup.sh /app/entrypoint-setup.sh
+RUN chmod +x /app/wait-for-it.sh /app/entrypoint-setup.sh
+
+ENTRYPOINT ["/app/entrypoint-setup.sh"]

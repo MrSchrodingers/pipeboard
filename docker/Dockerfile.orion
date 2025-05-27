@@ -1,0 +1,22 @@
+FROM prefecthq/prefect:3.4.1-python3.12
+
+WORKDIR /app
+
+# 1) Dependências de sistema mínimas para Orion e o entrypoint
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl netcat-openbsd jq && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2) Variáveis de ambiente relevantes para o Prefect Server
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+
+# Copia apenas o entrypoint e scripts de utilidade que ele usa
+COPY docker/scripts/entrypoint-orion.sh /app/entrypoint-orion.sh
+COPY docker/scripts/wait-for-it.sh /app/wait-for-it.sh
+RUN chmod +x /app/entrypoint-orion.sh /app/wait-for-it.sh
+
+EXPOSE 4200
+ENTRYPOINT ["/app/entrypoint-orion.sh"]
