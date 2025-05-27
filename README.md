@@ -1,4 +1,3 @@
-````markdown
 # Pipeboard ETL Integration
 
 [![Python Version](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/) [![Prefect Version](https://img.shields.io/badge/prefect-3.4.1-green)](https://prefect.io/) [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
