@@ -404,7 +404,7 @@ class PipedriveEntitySynchronizer:
 
             df_processed = self._process_page_data(df_page, all_fields)
             if not df_processed.empty:
-                all_records_processed.append(df_processed)
+                self.repository.save(df_processed)
                 total_count += len(df_processed)
             else:
                 self.logger.info(f"DataFrame vazio após processamento da página para {self.entity_name}.")
