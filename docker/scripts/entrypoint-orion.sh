@@ -14,15 +14,22 @@ echo "[OK] Orion healthy."
 export PREFECT_API_URL="http://localhost:${PREFECT_SERVER_API_PORT:-4200}/api"
 export PREFECT_API_KEY="${PREFECT_SERVER_API_ADMIN_API_KEY:-}" 
 
-echo "[INFO] Ensuring Prefect work pool '${PREFECT_WORK_POOL_NAME:-docker-pool}' exists…"
+WORK_POOL_NAME="${PREFECT_WORK_POOL_NAME:-docker-pool}"
 
-if prefect work-pool inspect "${PREFECT_WORK_POOL_NAME:-docker-pool}" >/dev/null 2>&1; then
-    echo "[INFO] Work pool '${PREFECT_WORK_POOL_NAME:-docker-pool}' already exists."
+echo "[INFO] Garantindo que o work pool '${WORK_POOL_NAME}' existe..."
+
+if prefect work-pool inspect "${WORK_POOL_NAME}" >/dev/null 2>&1; then
+    echo "[INFO] Work pool '${WORK_POOL_NAME}' já existe."
 else
-    echo "[INFO] Creating work pool '${PREFECT_WORK_POOL_NAME:-docker-pool}'..."
-    prefect work-pool create "${PREFECT_WORK_POOL_NAME:-docker-pool}" --type docker --limit 1
-    echo "[INFO] Work pool '${PREFECT_WORK_POOL_NAME:-docker-pool}' created."
+    echo "[INFO] Criando work pool '${WORK_POOL_NAME}'..."
+    prefect work-pool create "${WORK_POOL_NAME}" --type docker
+    echo "[INFO] Work pool '${WORK_POOL_NAME}' criado."
 fi
+
+# Define o limite de concorrência
+echo "[INFO] Definindo limite de concorrência para o work pool '${WORK_POOL_NAME}'..."
+prefect work-pool set-concurrency-limit "${WORK_POOL_NAME}" 1
+echo "[INFO] Limite de concorrência definido."
 
 # Limpar as variáveis de ambiente se não forem mais necessárias neste escopo.
 unset PREFECT_API_URL

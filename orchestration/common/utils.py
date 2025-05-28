@@ -385,6 +385,7 @@ class PipedriveEntitySynchronizer:
 # --- Funções para gerenciar o timestamp da última execução ---
 def get_last_successful_run_ts(flow_id: str, cur) -> Optional[datetime]:
     """Busca o timestamp da última execução bem-sucedida para um flow_id."""
+    create_etl_flow_meta_if_not_exists(cur)
     try:
         cur.execute("SELECT last_success_ts FROM etl_flow_meta WHERE flow_id = %s", (flow_id,))
         result = cur.fetchone()
@@ -395,6 +396,7 @@ def get_last_successful_run_ts(flow_id: str, cur) -> Optional[datetime]:
 
 def update_last_successful_run_ts(flow_id: str, ts: datetime, cur):
     """Atualiza o timestamp da última execução bem-sucedida para um flow_id."""
+    create_etl_flow_meta_if_not_exists(cur)
     try:
         cur.execute(
             """
@@ -467,3 +469,15 @@ def has_recent_updates_in_dependencies(
 
     logger.info(f"Nenhuma alteração recente encontrada nas tabelas dependentes configuradas desde {since_timestamp}.")
     return False
+
+def create_etl_flow_meta_if_not_exists(cur):
+    """
+    Cria a tabela etl_flow_meta se ainda não existir.
+    Torna o código idempotente para ambientes novos ou com migrations limpas.
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS etl_flow_meta (
+            flow_id TEXT PRIMARY KEY,
+            last_success_ts TIMESTAMP WITH TIME ZONE NOT NULL
+        );
+    """)

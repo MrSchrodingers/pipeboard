@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import Any, Dict, List, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from core.schemas.shared_schema import Address, ContactDetail
 from core.utils.schema_utils import PDBaseModel
 
@@ -35,3 +35,10 @@ class Person(PDBaseModel):
     job_title:      Optional[str] = None
     postal_address: Optional[Address] = None
     
+    @field_validator("org_id", "picture_id", mode="before")
+    @classmethod
+    def nan_to_none_days(cls, v):
+        import numpy as np
+        if v is not None and isinstance(v, float) and np.isnan(v):
+            return None
+        return v

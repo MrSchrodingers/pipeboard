@@ -86,3 +86,11 @@ class User(PDBaseModel):
         if v is None:
             return None
         return bool(v) 
+    
+    @field_validator("phone", mode="before")
+    @classmethod
+    def nan_to_none_phone(cls, v):
+        import numpy as np
+        if v is not None and isinstance(v, float) and np.isnan(v):
+            return None
+        return v

@@ -49,7 +49,7 @@ def sync_pipedrive_leads_flow():
         lead_specific_handlers = {}
         pydantic_lead_field_model = None
 
-        if pydantic_lead_field_model is None and "/leadFields" is not None:
+        if pydantic_lead_field_model is None:
             logger.warning("pydantic_model_field para Leads é None, mas api_endpoint_fields ('/leadFields') está configurado. O processamento de campos customizados pode ser limitado.")
 
         leads_synchronizer = PipedriveEntitySynchronizer(

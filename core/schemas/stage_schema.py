@@ -1,5 +1,7 @@
 from datetime import datetime
 from typing import Optional
+
+from pydantic import field_validator
 from core.utils.schema_utils import PDBaseModel
 
 class Stage(PDBaseModel):
@@ -15,3 +17,11 @@ class Stage(PDBaseModel):
     update_time:            Optional[datetime]  = None
 
     model_config = {"extra": "allow"}
+
+    @field_validator("days_to_rotten", mode="before")
+    @classmethod
+    def nan_to_none_days(cls, v):
+        import numpy as np
+        if v is not None and isinstance(v, float) and np.isnan(v):
+            return None
+        return v

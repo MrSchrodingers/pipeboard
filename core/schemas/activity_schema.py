@@ -91,5 +91,13 @@ class Activity(PDBaseModel):
             if not stripped_v or stripped_v == "0000-00-00" or stripped_v.startswith("-0001"):
                 return None
         return v
+    
+    @field_validator("org_id", mode="before")
+    @classmethod
+    def nan_to_none_days(cls, v):
+        import numpy as np
+        if v is not None and isinstance(v, float) and np.isnan(v):
+            return None
+        return v
         
     model_config = {"extra": "allow"}

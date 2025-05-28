@@ -312,6 +312,38 @@ class PipedriveEntitySynchronizer:
         result = result[ordered + sorted(remaining)]
         result = result.loc[:, ~result.columns.duplicated()]
         return result
+    
+    def _fetch_and_prepare_entity_fields(self) -> List[Any]:
+        """
+        Prepara os metadados dos campos da entidade.
+        """
+        if self.api_endpoint_fields and self.pydantic_model_field:
+            self._fetch_and_cache_field_metadata()
+            self._precompute_custom_field_slugs()
+            self._build_field_helper_maps()
+        return self.pipedrive_field_metadata
+
+    def _process_page_data(self, df_page: pd.DataFrame, all_fields: List[Any]) -> pd.DataFrame:
+        """
+        Processa os dados de uma página, aplicando validações e ajustes necessários.
+        """
+        if df_page.empty:
+            return pd.DataFrame()
+
+        # Validação dos dados
+        validated = self._validate_batch(df_page.to_dict(orient="records"))
+        if not validated:
+            return pd.DataFrame()
+        df_validated = pd.DataFrame(validated)
+
+        # Processamento de campos específicos
+        df_processed = self._process_specific_standard_fields(df_validated)
+        # Explosão de campos personalizados
+        df_exploded = self._explode_custom_fields(df_processed)
+        # Ajuste final de esquema e tipos
+        final_df = self._ensure_final_schema_and_types(df_exploded)
+
+        return final_df
 
     # ───────────────────────────────
     # 7. LOOP PRINCIPAL
