@@ -1,7 +1,12 @@
-import pandas as pd
+from datetime import datetime, timezone as dt_timezone
 from prefect import flow, get_run_logger
 from prefect.runtime import flow_run
-from prefect.exceptions import MissingContextError
+from infrastructure.repositories.dependent_entities import ORGANIZATIONS_DEPENDENT_ENTITIES_CONFIG
+from orchestration.common.utils import (
+    get_last_successful_run_ts,
+    update_last_successful_run_ts,
+    has_recent_updates_in_dependencies,
+)
 from core.schemas import Organization, OrganizationField
 from infrastructure.repositories import RepositorioBase, SchemaConfig, enrich_with_lookups_sql
 from infrastructure.repositories.lookups import ORGANIZATIONS_LOOKUP_MAPPINGS
@@ -15,13 +20,33 @@ import time
 def sync_pipedrive_organizations_flow():
     logger = get_run_logger()
     flow_name_label = "OrganizationsSync"
-
     metrics.etl_counter.labels(flow_type=flow_name_label).inc()
     start_time_flow = time.time()
     processed_count = 0
+    updated_since_val = None
     flow_run_id_value = "unknown_flow_run"
 
     try:
+        # Verifica dependências
+        with get_postgres_conn().connection() as conn:
+            with conn.cursor() as cur:
+                last_success_ts = get_last_successful_run_ts(flow_name_label, cur)
+                logger.info(f"Último sucesso em {last_success_ts} para o flow {flow_name_label}")
+
+                if last_success_ts:
+                    deps_have_updates = has_recent_updates_in_dependencies(
+                        dependent_config=ORGANIZATIONS_DEPENDENT_ENTITIES_CONFIG,
+                        since_timestamp=last_success_ts,
+                        conn=conn,
+                        logger=logger
+                    )
+                    if not deps_have_updates:
+                        updated_since_val = last_success_ts.astimezone(dt_timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                        logger.info(f"Rodando organizations em modo incremental (updated_since={updated_since_val})")
+                    else:
+                        logger.info("Dependências alteradas desde a última execução. Rodando full sync.")
+
+        # Instanciação do repo e synchronizer igual ao seu código original...
         org_repo = RepositorioBase(
             "organizacoes",
             SchemaConfig(
@@ -37,26 +62,22 @@ def sync_pipedrive_organizations_flow():
                 allow_column_dropping=True
             )
         )
-
         org_core_columns = [
             'id', 'company_id', 'owner_id', 'name',
             'active_flag', 'visible_to', 'label_ids',
             'add_time', 'update_time', 'cc_email'
         ]
-
         org_specific_handlers = {}
         address_field_name_in_model = None
         if hasattr(Organization, 'postal_address') and 'postal_address' in Organization.model_fields:
             address_field_name_in_model = 'postal_address'
         elif hasattr(Organization, 'address') and 'address' in Organization.model_fields:
             address_field_name_in_model = 'address'
-
         if address_field_name_in_model:
             org_specific_handlers[address_field_name_in_model] = {
                 'function': utils.explode_address,
                 'slug_name': 'endereco_principal'
             }
-
         org_synchronizer = PipedriveEntitySynchronizer(
             entity_name="Organization",
             pydantic_model_main=Organization,
@@ -70,9 +91,15 @@ def sync_pipedrive_organizations_flow():
         )
 
         logger.info("Starting Organizations synchronization...")
-        processed_count = org_synchronizer.run_sync()
+        processed_count = org_synchronizer.run_sync(updated_since_val=updated_since_val)
         logger.info(f"Organizations synchronization completed. Processed {processed_count} records.")
         metrics.etl_last_successful_run_timestamp.labels(flow_type=flow_name_label).set_to_current_time()
+
+        # Atualiza timestamp de execução bem-sucedida
+        with get_postgres_conn().connection() as conn:
+            with conn.cursor() as cur:
+                update_last_successful_run_ts(flow_name_label, datetime.now(dt_timezone.utc), cur)
+            conn.commit()
 
         # Enrichment pós-sync
         try:

@@ -129,6 +129,17 @@ class RepositorioBase:
             ]
         for col in df_opt.columns:
             ser = df_opt[col]
+            col_pg_type = self._get_pg_type(col, ser.dtype)
+            
+            if "TIMESTAMP" in col_pg_type or col_pg_type == "DATE":
+                try:
+                    df_opt[col] = pd.to_datetime(ser, errors='coerce', utc=True if "WITH TIME ZONE" in col_pg_type else None)
+                    if col_pg_type == "DATE":
+                         df_opt[col] = df_opt[col].dt.normalize().dt.date 
+                    self.logger.debug(f"Coluna '{col}' convertida para datetime/date pandas.")
+                except Exception as e_conv:
+                    self.logger.warning(f"Falha ao converter coluna '{col}' para datetime/date pandas: {e_conv}. Mantendo como objeto.")
+                
             if self.schema_config.types.get(col, "").upper() == "JSONB":
                 if not ser.empty:
                     val_antes = ser.iloc[0]

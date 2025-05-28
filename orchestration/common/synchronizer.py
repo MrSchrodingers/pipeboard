@@ -1,4 +1,5 @@
 from __future__ import annotations
+import structlog
 
 from typing import Any, Callable, Dict, List, Optional, Type
 
@@ -11,6 +12,7 @@ from infrastructure.clients import PipedriveAPIClient
 from infrastructure.repositories import RepositorioBase
 from . import utils
 
+log = structlog.get_logger(__name__)
 
 class PipedriveEntitySynchronizer:
     """
@@ -314,34 +316,78 @@ class PipedriveEntitySynchronizer:
     # ───────────────────────────────
     # 7. LOOP PRINCIPAL
     # ───────────────────────────────
-    def run_sync(self) -> int:
-        self.logger.info("▶ Starting sync for %s", self.entity_name)
-        total = 0
+    def run_sync(self,
+                 updated_since_val: Optional[str] = None,
+                 additional_params: Optional[Dict[str, Any]] = None) -> int:
+        """
+        Sincroniza entidades do Pipedrive.
+        Pode realizar uma sincronização completa ou incremental baseada no parâmetro updated_since_val.
 
-        for n, batch in enumerate(self.api_client.stream_all_entities(self.api_endpoint_main), 1):
-            if not batch:
+        Args:
+            updated_since_val: Se fornecido (formato YYYY-MM-DDTHH:MM:SSZ),
+                               busca apenas entidades atualizadas desde este timestamp.
+            additional_params: Outros parâmetros a serem passados para a API.
+
+        Returns:
+            O número total de registros processados.
+        """
+        try:
+            self.logger = get_run_logger()
+        except Exception:
+            self.logger = structlog.get_logger(__name__).bind(entity_name=self.entity_name if hasattr(self, 'entity_name') else "UnknownEntity")
+
+        self.logger.info(f"Iniciando run_sync para entidade: {self.entity_name}")
+
+        all_fields = self._fetch_and_prepare_entity_fields()
+        all_records_processed = []
+        total_count = 0
+
+        # Prepara os parâmetros para a chamada da API
+        api_call_params = {'limit': PipedriveAPIClient.DEFAULT_PAGINATION_LIMIT} 
+        if additional_params:
+            api_call_params.update(additional_params)
+
+        if updated_since_val:
+            # Assume-se que o endpoint principal (V2) suporta 'updated_since'
+            api_call_params['updated_since'] = updated_since_val
+            self.logger.info(f"Sincronização incremental para {self.entity_name}: usando updated_since='{updated_since_val}'")
+        else:
+            self.logger.info(f"Sincronização completa para {self.entity_name}: não usando updated_since.")
+
+        page_num = 1
+        for page_data_list in self.api_client.stream_all_entities(
+            endpoint=self.api_endpoint_main,
+            params=api_call_params # Passa os parâmetros combinados
+        ):
+            self.logger.info(f"Processando página {page_num} para {self.entity_name} com {len(page_data_list)} registros.")
+            page_num += 1
+            if not page_data_list:
+                self.logger.info(f"Página de dados vazia recebida para {self.entity_name}, continuando para o caso de haver mais páginas (raro).")
                 continue
 
-            self.logger.info("Batch %d (%d records)", n, len(batch))
-            records = self._validate_batch(batch)
-            if not records:
+            df_page = pd.DataFrame(page_data_list)
+            if df_page.empty:
+                self.logger.info(f"DataFrame vazio após converter página de dados para {self.entity_name}.")
                 continue
 
-            df = pd.DataFrame(records)
-            df = self._process_specific_standard_fields(df)
-            df = self._explode_custom_fields(df)
-            df = self._ensure_final_schema_and_types(df)
+            df_processed = self._process_page_data(df_page, all_fields)
+            if not df_processed.empty:
+                all_records_processed.append(df_processed)
+                total_count += len(df_processed)
+            else:
+                self.logger.info(f"DataFrame vazio após processamento da página para {self.entity_name}.")
 
-            if df.empty:
-                continue
+        if not all_records_processed:
+            self.logger.info(f"Nenhum registro para salvar para {self.entity_name} após processar todas as páginas.")
+            return 0
 
-            try:
-                df = df.loc[:, ~df.columns.duplicated()]
-                self.repository.save(df)
-                total += len(df)
-                self.logger.info("✔ Saved batch %d (%d rows)", n, len(df))
-            except Exception as exc:  # noqa: BLE001
-                self.logger.error("Save failed (batch %d): %s", n, exc, exc_info=True)
+        final_df = pd.concat(all_records_processed, ignore_index=True)
+        self.logger.info(f"Total de {total_count} registros processados para {self.entity_name} antes de salvar.")
 
-        self.logger.info("■ Sync finished for %s — %d records processed.", self.entity_name, total)
-        return total
+        if not final_df.empty:
+            self.repository.save(final_df)
+            self.logger.info(f"Dados salvos com sucesso para {self.entity_name}. Total de registros: {len(final_df)}.")
+        else:
+            self.logger.info(f"DataFrame final vazio para {self.entity_name}. Nada foi salvo.")
+
+        return total_count

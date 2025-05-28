@@ -1,4 +1,10 @@
-import pandas as pd
+from datetime import datetime, timezone as dt_timezone
+from infrastructure.repositories.dependent_entities import ACTIVITIES_DEPENDENT_ENTITIES_CONFIG
+from orchestration.common.utils import (
+    get_last_successful_run_ts,
+    update_last_successful_run_ts,
+    has_recent_updates_in_dependencies,
+)
 from prefect import flow, get_run_logger, task
 from prefect.runtime import flow_run
 from core.schemas.activity_schema import Activity
@@ -10,7 +16,6 @@ from orchestration.common import utils
 from infrastructure.observability import metrics
 from infrastructure.db.postgres_adapter import get_postgres_conn
 import time
-import psycopg2
 from psycopg2 import sql
 
 def enrich_with_lookups_sql(
@@ -85,13 +90,32 @@ def enrich_activities_table_task_sql():
 def sync_pipedrive_activities_flow():
     logger = get_run_logger()
     flow_name_label = "ActivitiesSync"
-
     metrics.etl_counter.labels(flow_type=flow_name_label).inc()
     start_time_flow = time.time()
     processed_count = 0
-    flow_run_id_value = "unknown_flow_run" 
+    flow_run_id_value = "unknown_flow_run"
+    updated_since_val = None
 
     try:
+        # Verifica dependências
+        with get_postgres_conn().connection() as conn:
+            with conn.cursor() as cur:
+                last_success_ts = get_last_successful_run_ts(flow_name_label, cur)
+                logger.info(f"Último sucesso em {last_success_ts} para o flow {flow_name_label}")
+
+                if last_success_ts:
+                    deps_have_updates = has_recent_updates_in_dependencies(
+                        dependent_config=ACTIVITIES_DEPENDENT_ENTITIES_CONFIG,
+                        since_timestamp=last_success_ts,
+                        conn=conn,
+                        logger=logger
+                    )
+                    if not deps_have_updates:
+                        updated_since_val = last_success_ts.astimezone(dt_timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                        logger.info(f"Rodando activities em modo incremental (updated_since={updated_since_val})")
+                    else:
+                        logger.info("Dependências alteradas desde a última execução. Rodando full sync.")
+
         activity_repo_config = SchemaConfig(
             pk=['id'],
             types={
@@ -110,26 +134,27 @@ def sync_pipedrive_activities_flow():
                 'location_formatted_address': 'TEXT',
                 'participants': 'JSONB',
                 'attendees': 'JSONB',
+                'add_time': 'TIMESTAMP WITH TIME ZONE',
+                'update_time': 'TIMESTAMP WITH TIME ZONE',
+                'marked_as_done_time': 'TIMESTAMP WITH TIME ZONE',
             },
             indexes=[
-                'user_id', 'deal_id', 'person_id', 'org_id', 'project_id', 
+                'user_id', 'deal_id', 'person_id', 'org_id', 'project_id',
                 'type', 'done', 'due_date', 'update_time', 'add_time'
             ],
             allow_column_dropping=True
         )
         activity_repo = RepositorioBase("atividades", activity_repo_config)
-
         activity_core_columns = [
-            'id', 'company_id', 'user_id', 'done', 'type', 'subject', 'due_date', 'due_time', 
-            'duration', 'add_time', 'update_time', 'marked_as_done_time', 'deal_id', 
+            'id', 'company_id', 'user_id', 'done', 'type', 'subject', 'due_date', 'due_time',
+            'duration', 'add_time', 'update_time', 'marked_as_done_time', 'deal_id',
             'person_id', 'org_id', 'project_id', 'note', 'location', 'location_formatted_address',
-            'public_description', 'active_flag', 'update_user_id', 'gcal_event_id', 
-            'google_calendar_id', 'google_calendar_etag', 'conference_meeting_client', 
-            'conference_meeting_url', 'conference_meeting_id', 'created_by_user_id', 
+            'public_description', 'active_flag', 'update_user_id', 'gcal_event_id',
+            'google_calendar_id', 'google_calendar_etag', 'conference_meeting_client',
+            'conference_meeting_url', 'conference_meeting_id', 'created_by_user_id',
             'assigned_to_user_id', 'participants', 'attendees', 'busy_flag',
             'owner_name', 'person_name', 'org_name', 'deal_title'
         ]
-
         activity_synchronizer = PipedriveEntitySynchronizer(
             entity_name="Activity",
             pydantic_model_main=Activity,
@@ -143,9 +168,15 @@ def sync_pipedrive_activities_flow():
         )
 
         logger.info("Starting Activities synchronization...")
-        processed_count = activity_synchronizer.run_sync()
+        processed_count = activity_synchronizer.run_sync(updated_since_val=updated_since_val)
         logger.info(f"Activities synchronization completed. Processed {processed_count} records.")
         metrics.etl_last_successful_run_timestamp.labels(flow_type=flow_name_label).set_to_current_time()
+
+        # Atualiza timestamp de execução bem-sucedida
+        with get_postgres_conn().connection() as conn:
+            with conn.cursor() as cur:
+                update_last_successful_run_ts(flow_name_label, datetime.now(dt_timezone.utc), cur)
+            conn.commit()
 
         if activity_repo.schema_config.allow_column_dropping:
             logger.info(f"Attempting to drop fully null columns from '{activity_repo.table_name}' table...")

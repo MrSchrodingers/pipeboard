@@ -1,10 +1,17 @@
+from datetime import datetime, timezone as dt_timezone
 import pandas as pd
 from prefect import flow, get_run_logger, task
 from core.schemas import Deal, DealField
 from prefect.runtime import flow_run
 from infrastructure.clients import PipedriveAPIClient
 from infrastructure.repositories import RepositorioBase, SchemaConfig, enrich_with_lookups_sql
+from infrastructure.repositories.dependent_entities import DEALS_DEPENDENT_ENTITIES_CONFIG
 from infrastructure.repositories.lookups import DEALS_LOOKUP_MAPPINGS
+from orchestration.common.utils import (
+    get_last_successful_run_ts,
+    update_last_successful_run_ts,
+    has_recent_updates_in_dependencies,
+)
 from orchestration.common.synchronizer import PipedriveEntitySynchronizer
 from orchestration.common import utils
 from infrastructure.observability import metrics
@@ -48,8 +55,30 @@ def sync_pipedrive_deals_flow():
     api_client = PipedriveAPIClient()
     processed_count = 0
     flow_run_id_value = "unknown_flow_run"
+    updated_since_val = None
 
     try:
+        # 1. Verifique timestamp da última execução (persistido no banco)
+        with get_postgres_conn().connection() as conn:
+            with conn.cursor() as cur:
+                last_success_ts = get_last_successful_run_ts(flow_name_label, cur)
+                logger.info(f"Último sucesso em {last_success_ts} para o flow {flow_name_label}")
+
+                # 2. Verifique se alguma tabela dependente teve update desde então
+                if last_success_ts:
+                    deps_have_updates = has_recent_updates_in_dependencies(
+                        dependent_config=DEALS_DEPENDENT_ENTITIES_CONFIG,
+                        since_timestamp=last_success_ts,
+                        conn=conn,
+                        logger=logger
+                    )
+                    if not deps_have_updates:
+                        # Se nada mudou nas dependências, pode rodar incremental!
+                        updated_since_val = last_success_ts.astimezone(dt_timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                        logger.info(f"Rodando deals em modo incremental (updated_since={updated_since_val})")
+                    else:
+                        logger.info("Dependências alteradas desde a última execução. Rodando full sync.")
+
         currency_map_data = get_pipedrive_currency_map_task(api_client=api_client)
         deal_repo_config = SchemaConfig(
             pk=['id'],
@@ -92,9 +121,20 @@ def sync_pipedrive_deals_flow():
         )
 
         logger.info("Starting Deals synchronization...")
-        processed_count = deals_synchronizer.run_sync()
+
+        # 3. Passe updated_since_val para o synchronizer se for incremental
+        processed_count = deals_synchronizer.run_sync(
+            updated_since_val=updated_since_val
+        )
+
         logger.info(f"Deals synchronization completed. Processed {processed_count} records.")
         metrics.etl_last_successful_run_timestamp.labels(flow_type=flow_name_label).set_to_current_time()
+
+        # 4. Atualize o timestamp da última execução bem-sucedida
+        with get_postgres_conn().connection() as conn:
+            with conn.cursor() as cur:
+                update_last_successful_run_ts(flow_name_label, datetime.now(dt_timezone.utc), cur)
+            conn.commit()
 
         if deal_repo.schema_config.allow_column_dropping:
             logger.info(f"Attempting to drop fully null columns from '{deal_repo.table_name}' table...")

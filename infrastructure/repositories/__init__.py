@@ -6,3 +6,4 @@ from .lookups import (
   LEADS_LOOKUP_MAPPINGS, ORGANIZATIONS_LOOKUP_MAPPINGS, PERSONS_LOOKUP_MAPPINGS
   )
 from .enrich_with_lookups import enrich_with_lookups_sql
+from .dependent_entities import DEALS_DEPENDENT_ENTITIES_CONFIG

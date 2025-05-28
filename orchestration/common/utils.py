@@ -3,11 +3,12 @@ from __future__ import annotations
 # ──────────────────────────────────────────────────────────────────────────────
 #  utils – slugify + explode helpers
 # ──────────────────────────────────────────────────────────────────────────────
+from datetime import datetime
 import json
 import re
 from functools import lru_cache
-from typing import Any, Optional
-
+from typing import Any, Dict, Optional
+from psycopg2 import sql
 import numpy as np
 import pandas as pd
 
@@ -381,3 +382,88 @@ class PipedriveEntitySynchronizer:
         self.logger.info("■ Sync finished — %s records", total)
         return total
         
+# --- Funções para gerenciar o timestamp da última execução ---
+def get_last_successful_run_ts(flow_id: str, cur) -> Optional[datetime]:
+    """Busca o timestamp da última execução bem-sucedida para um flow_id."""
+    try:
+        cur.execute("SELECT last_success_ts FROM etl_flow_meta WHERE flow_id = %s", (flow_id,))
+        result = cur.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        print(f"Erro ao buscar last_successful_run_ts para {flow_id}: {e}")
+        return None
+
+def update_last_successful_run_ts(flow_id: str, ts: datetime, cur):
+    """Atualiza o timestamp da última execução bem-sucedida para um flow_id."""
+    try:
+        cur.execute(
+            """
+            INSERT INTO etl_flow_meta (flow_id, last_success_ts) VALUES (%s, %s)
+            ON CONFLICT (flow_id) DO UPDATE SET last_success_ts = EXCLUDED.last_success_ts
+            """,
+            (flow_id, ts)
+        )
+    except Exception as e:
+        print(f"Erro ao atualizar last_successful_run_ts para {flow_id}: {e}")
+        raise
+
+# --- Função para verificar atualizações em tabelas dependentes ---
+def has_recent_updates_in_dependencies(
+    dependent_config: Dict[str, Dict[str, Any]],
+    since_timestamp: datetime,
+    conn,
+    logger 
+) -> bool:
+    """
+    Verifica se alguma das tabelas dependentes configuradas teve atualizações
+    desde o 'since_timestamp'.
+    """
+    if not since_timestamp:
+        logger.info("Nenhum timestamp anterior para verificação de dependências. Assumindo que há alterações.")
+        return True # Se não há execução anterior, faz full sync.
+
+    with conn.cursor() as cur:
+        for dep_key, dep_info in dependent_config.items():
+            table_name = dep_info.get("table_name")
+            ts_cols = dep_info.get("timestamp_columns", [])
+
+            if not table_name or not ts_cols:
+                logger.warning(f"Configuração de dependência incompleta para '{dep_key}'. Pulando.")
+                continue
+
+            # Verifica se a tabela dependente existe
+            cur.execute("SELECT to_regclass(%s::regclass)", (table_name,))
+            if cur.fetchone()[0] is None : #
+                 logger.warning(f"Tabela dependente '{table_name}' para '{dep_key}' não encontrada. Pulando.")
+                 continue
+
+            conditions = []
+            params_for_query = []
+            for col in ts_cols:
+                cur.execute("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = %s AND column_name = %s AND table_schema = current_schema()
+                """, (table_name, col))
+                if cur.fetchone():
+                    conditions.append(f"{sql.Identifier(col).as_string(cur)} >= %s")
+                    params_for_query.append(since_timestamp)
+                else:
+                    logger.warning(f"Coluna de timestamp '{col}' não encontrada na tabela dependente '{table_name}'. Pulando esta coluna.")
+
+            if not conditions:
+                logger.warning(f"Nenhuma coluna de timestamp válida encontrada ou configurada para a tabela dependente '{table_name}'. Pulando verificação desta tabela.")
+                continue
+
+            query_str = sql.SQL("SELECT 1 FROM {table} WHERE {condition_clause} LIMIT 1").format(
+                table=sql.Identifier(table_name),
+                condition_clause=sql.SQL(" OR ").join(map(sql.SQL, conditions))
+            )
+
+            logger.debug(f"Verificando dependência '{table_name}': Query: {query_str.as_string(cur)} com parâmetros: {params_for_query}")
+            cur.execute(query_str, tuple(params_for_query))
+            if cur.fetchone():
+                logger.info(f"Alterações recentes encontradas na tabela dependente: '{table_name}' (para '{dep_key}') desde {since_timestamp}.")
+                return True 
+
+    logger.info(f"Nenhuma alteração recente encontrada nas tabelas dependentes configuradas desde {since_timestamp}.")
+    return False

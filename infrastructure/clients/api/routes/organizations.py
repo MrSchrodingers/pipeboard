@@ -5,5 +5,5 @@ from infrastructure.clients.api.route_registry import route_registry
 @with_cache(ttl=3600, key_prefix="pipedrive:organizations")
 def fetch_organizations(client, params=None):
     """Busca todas as organizações cadastradas."""
-    url = f"{client.BASE_URL_V1}/organizations"
+    url = f"{client.BASE_URL_V2}/organizations"
     return client.get(url, params=params).json()

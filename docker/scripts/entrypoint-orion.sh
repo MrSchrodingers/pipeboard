@@ -20,7 +20,7 @@ if prefect work-pool inspect "${PREFECT_WORK_POOL_NAME:-docker-pool}" >/dev/null
     echo "[INFO] Work pool '${PREFECT_WORK_POOL_NAME:-docker-pool}' already exists."
 else
     echo "[INFO] Creating work pool '${PREFECT_WORK_POOL_NAME:-docker-pool}'..."
-    prefect work-pool create "${PREFECT_WORK_POOL_NAME:-docker-pool}" --type docker
+    prefect work-pool create "${PREFECT_WORK_POOL_NAME:-docker-pool}" --type docker --limit 1
     echo "[INFO] Work pool '${PREFECT_WORK_POOL_NAME:-docker-pool}' created."
 fi
 
