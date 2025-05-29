@@ -12,11 +12,11 @@ DEALS_LOOKUP_MAPPINGS = {
             'value_col': 'name',
             'target_col': 'creator_user_name'
         },
-        'user_id': {
-            'source': 'usuarios',
+        'org_id': {
+            'source': 'organizacoes',
             'key': 'id',
             'value_col': 'name',
-            'target_col': 'user_name'
+            'target_col': 'org_name'
         },
         'person_id': {
             'source': 'pessoas',

@@ -59,7 +59,7 @@ class Deal(PDBaseModel):
                 return None
         return v
     
-    @field_validator("org_id", mode="before")
+    @field_validator("org_id", "person_id", mode="before")
     @classmethod
     def nan_to_none_days(cls, v):
         import numpy as np

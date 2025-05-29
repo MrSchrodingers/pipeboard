@@ -474,14 +474,22 @@ class RepositorioBase:
                 if col_name in to_keep:
                     continue
                 try:
-                    query_count = sql.SQL('SELECT COUNT({c}) FROM {t} WHERE {c} IS NOT NULL LIMIT 1').format(
+                    query_check = sql.SQL("""
+                        SELECT COUNT(*) FROM {t}
+                        WHERE {c} IS NOT NULL
+                        AND (
+                            pg_typeof({c})::text NOT LIKE '%[]'
+                            OR array_length(array_remove({c}, NULL), 1) > 0
+                        )
+                        LIMIT 1
+                    """).format(
                         c=sql.Identifier(col_name), t=sql.Identifier(self.table_name)
                     )
-                    cur.execute(query_count)
+                    cur.execute(query_check)
                     count_not_null = cur.fetchone()[0]
                     
                     if count_not_null == 0:
-                        self.logger.info(f"Coluna '{col_name}' está inteiramente nula. Removendo...")
+                        self.logger.info(f"Coluna '{col_name}' está inteiramente nula ou só com arrays nulos/vazios. Removendo...")
                         query_drop = sql.SQL('ALTER TABLE {t} DROP COLUMN {c}').format(
                             t=sql.Identifier(self.table_name), c=sql.Identifier(col_name)
                         )
@@ -492,6 +500,6 @@ class RepositorioBase:
             
             if dropped_count > 0:
                 conn.commit()
-                self.logger.info(f"Removidas {dropped_count} colunas totalmente nulas da tabela '{self.table_name}'.")
+                self.logger.info(f"Removidas {dropped_count} colunas totalmente nulas ou só com arrays nulos/vazios da tabela '{self.table_name}'.")
             else:
-                self.logger.info(f"Nenhuma coluna totalmente nula encontrada para remover da tabela '{self.table_name}'.")
+                self.logger.info(f"Nenhuma coluna totalmente nula ou só com arrays nulos/vazios encontrada para remover da tabela '{self.table_name}'.")
