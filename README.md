@@ -350,4 +350,4 @@ Para o ambiente de desenvolvimento local, após clonar o repositório e configur
 
 ## Licença
 
-Este projeto está licenciado sob a [Licença MIT](https://www.google.com/search?q=LICENSE).
+Este projeto está licenciado sob a [Licença GNU](https://www.gnu.org/licenses/gpl-3.0.html).
