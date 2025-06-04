@@ -1,226 +1,267 @@
+from __future__ import annotations
+
+import gc
+import time
+from typing import Dict, Iterable
+
 import numpy as np
 import pandas as pd
 from prefect import flow, get_run_logger, task
 from prefect.runtime import flow_run
-from typing import Dict
+
 from infrastructure.db.postgres_adapter import get_postgres_conn
-from infrastructure.repositories import RepositorioBase, SchemaConfig
 from infrastructure.observability import metrics
-import time
+from infrastructure.repositories import RepositorioBase, SchemaConfig
 
-# 1. Tabela alvo de BI
-bi_target_table_name = "main_bi"
-bi_target_pk = 'deal_id'
+# ──────────────────────────────────────────────────────────
+# Configurações gerais
+# ──────────────────────────────────────────────────────────
+BI_TABLE          = "main_bi"
+PK                = "deal_id"
+CHUNK             = 25_000   # linhas por lote na leitura paginada
+STAGING_THRESHOLD = 1_000    # usa COPY se ≥ esse valor
 
-bi_target_repo = RepositorioBase(
-    bi_target_table_name, 
+bi_repo = RepositorioBase(
+    BI_TABLE,
     SchemaConfig(
-        pk=[bi_target_pk], 
+        pk=[PK],
         types={
-            bi_target_pk: 'BIGINT',
-            'title': 'TEXT',
-            'status': 'VARCHAR(50)',
-            'value': 'NUMERIC(18,4)',
-            'currency': 'VARCHAR(10)',
-            'add_time': 'TIMESTAMP WITH TIME ZONE',
-            'update_time': 'TIMESTAMP WITH TIME ZONE',
-            'close_time': 'TIMESTAMP WITH TIME ZONE',
-            'expected_close_date': 'DATE',
-            'lost_time': 'TIMESTAMP WITH TIME ZONE',
-            'won_time': 'TIMESTAMP WITH TIME ZONE',
-            'stage_change_time': 'TIMESTAMP WITH TIME ZONE',
-            'creator_user_id': 'BIGINT',
-            'user_id': 'BIGINT',
-            'pipeline_id': 'BIGINT',
-            'stage_id': 'BIGINT',
-            'label_ids': 'JSONB',
-            'contact_name': 'TEXT',
-            'contact_email': 'TEXT',
-            'contact_phone': 'TEXT',
-            'company_name': 'TEXT',
-            'activity_count': 'SMALLINT',
-            'last_activity_due_date': 'TIMESTAMP WITH TIME ZONE',
-            'deal_duration_days': 'SMALLINT',
-            'value_per_day': 'NUMERIC(18,4)',
-        }, 
-        indexes=['status', 'add_time', 'user_id', 'pipeline_id', 'stage_id', 'contact_name', 'company_name', 'update_time']
-    )
+            PK: "BIGINT",
+            "title": "TEXT",
+            "status": "VARCHAR(50)",
+            "value": "NUMERIC(18,4)",
+            "currency": "VARCHAR(10)",
+            "add_time": "TIMESTAMP WITH TIME ZONE",
+            "update_time": "TIMESTAMP WITH TIME ZONE",
+            "close_time": "TIMESTAMP WITH TIME ZONE",
+            "expected_close_date": "DATE",
+            "lost_time": "TIMESTAMP WITH TIME ZONE",
+            "won_time": "TIMESTAMP WITH TIME ZONE",
+            "stage_change_time": "TIMESTAMP WITH TIME ZONE",
+            "creator_user_id": "BIGINT",
+            "user_id": "BIGINT",
+            "pipeline_id": "BIGINT",
+            "stage_id": "BIGINT",
+            "label_ids": "JSONB",
+            "contact_name": "TEXT",
+            "contact_email": "TEXT",
+            "contact_phone": "TEXT",
+            "company_name": "TEXT",
+            "activity_count": "SMALLINT",
+            "last_activity_due_date": "TIMESTAMP WITH TIME ZONE",
+            "deal_duration_days": "SMALLINT",
+            "value_per_day": "NUMERIC(18,4)",
+        },
+        indexes=[
+            "status",
+            "add_time",
+            "user_id",
+            "pipeline_id",
+            "stage_id",
+            "contact_name",
+            "company_name",
+            "update_time",
+        ],
+    ),
 )
 
-@task(name="Load BI Sources")
+# ──────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────
+def _read_chunks(query: str) -> Iterable[pd.DataFrame]:
+    """Lê um SELECT em pedaços para economizar RAM."""
+    with get_postgres_conn().connection() as conn:
+        for chunk in pd.read_sql_query(query, conn, chunksize=CHUNK):
+            yield chunk
+
+
+def _vectorized_value_per_day(df: pd.DataFrame) -> None:
+    duration = (df["close_time"] - df["add_time"]).dt.days
+    df["deal_duration_days"] = duration.astype("Int16")
+    df["value_per_day"] = (
+        pd.to_numeric(df["value"], errors="coerce") / duration.replace(0, np.nan)
+    )
+
+# ──────────────────────────────────────────────────────────
+# Tasks
+# ──────────────────────────────────────────────────────────
+@task(name="Load BI Sources", retries=2, retry_delay_seconds=30)
 def load_bi_sources() -> Dict[str, pd.DataFrame]:
     logger = get_run_logger()
-    sources = {
-        'deals': "SELECT * FROM negocios",
-        'contacts': "SELECT * FROM pessoas",
-        'companies': "SELECT * FROM organizacoes",
-        'activities': "SELECT * FROM atividades",
+
+    # apenas as colunas necessárias para o BI
+    sources: dict[str, str] = {
+        "deals": """
+            SELECT id, person_id, org_id, title, status, value, currency,
+                   add_time, update_time, close_time,
+                   expected_close_date, lost_time, won_time,
+                   stage_change_time, creator_user_id, user_id,
+                   pipeline_id, stage_id, label_ids
+            FROM negocios
+        """,
+        "contacts": """
+            SELECT id, name, email_contatos_primary_value,
+                   telefone_contatos_primary_value
+            FROM pessoas
+        """,
+        "companies": "SELECT id, name FROM organizacoes",
+        "activities": "SELECT id, deal_id, due_date FROM atividades",
     }
-    data = {}
+
+    data: Dict[str, pd.DataFrame] = {}
     try:
-        with get_postgres_conn().connection() as conn:
-            for name, query in sources.items():
-                df = pd.read_sql(query, conn)
-                data[name] = df
-                logger.info(f"Loaded {len(df)} rows from '{name}'.")
-    except Exception as e:
-        logger.error(f"Error loading BI sources: {e}", exc_info=True)
-        for k in sources: data[k] = pd.DataFrame()
+        for key, query in sources.items():
+            df = pd.concat(_read_chunks(query), ignore_index=True)
+            logger.info("Loaded %s rows from '%s'.", len(df), key)
+            data[key] = df
+    except Exception:
+        logger.exception("Error loading BI sources – returning empty DataFrames.")
+        return {k: pd.DataFrame() for k in sources}
+
     return data
 
+
 @task(name="Transform & Aggregate BI")
-def transform_and_aggregate_bi(
-    deals_df: pd.DataFrame,
-    contacts_df: pd.DataFrame,
-    companies_df: pd.DataFrame,
-    activities_df: pd.DataFrame
-) -> pd.DataFrame:
+def transform_and_aggregate_bi(data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     logger = get_run_logger()
-    if deals_df.empty:
-        logger.error("Deals DataFrame is empty. Returning empty BI.")
+    deals = data["deals"]
+
+    if deals.empty:
+        logger.warning("No deals – nothing to transform.")
         return pd.DataFrame()
-    bi_df = deals_df.copy()
 
-    # -- Flatten contact fields (email, phone) se existirem --
-    if 'person_id' in bi_df.columns and not contacts_df.empty:
-        contacts_min = contacts_df.rename(columns={
-            'id': 'person_id',
-            'name': 'contact_name',
-            'email_contatos_primary_value': 'contact_email',
-            'telefone_contatos_primary_value': 'contact_phone'
-        }, errors="ignore")
-        bi_df = bi_df.merge(
-            contacts_min[['person_id', 'contact_name', 'contact_email', 'contact_phone']].drop_duplicates('person_id'),
-            on='person_id', how='left'
+    # usa o próprio DataFrame (evita cópia)
+    bi = deals
+
+    # ── Contacts ─────────────────────────────
+    if not data["contacts"].empty and "person_id" in bi:
+        contacts = (
+            data["contacts"]
+            .rename(
+                columns={
+                    "id": "person_id",
+                    "name": "contact_name",
+                    "email_contatos_primary_value": "contact_email",
+                    "telefone_contatos_primary_value": "contact_phone",
+                }
+            )
+            .drop_duplicates("person_id")
+        )
+        bi = bi.merge(contacts, on="person_id", how="left")
+    else:
+        bi[["contact_name", "contact_email", "contact_phone"]] = pd.NA
+
+    # ── Companies ────────────────────────────
+    if not data["companies"].empty and "org_id" in bi:
+        companies = (
+            data["companies"]
+            .rename(columns={"id": "org_id", "name": "company_name"})
+            .drop_duplicates("org_id")
+        )
+
+        # --- Garantir dtype idêntico nas duas tabelas:
+        bi["org_id"] = bi["org_id"].astype("string")
+        companies["org_id"] = companies["org_id"].astype("string")
+
+
+        bi = bi.merge(companies, on="org_id", how="left")
+    else:
+        bi["company_name"] = pd.NA
+
+    # ── Activities ───────────────────────────
+    acts = data["activities"]
+    if not acts.empty and "deal_id" in acts:
+        acts["due_date"] = pd.to_datetime(acts["due_date"], errors="coerce", utc=True)
+        agg = (
+            acts.groupby("deal_id", observed=True)
+            .agg(
+                activity_count=("id", "count"),
+                last_activity_due_date=("due_date", "max"),
+            )
+            .reset_index()
+        )
+        bi = bi.merge(agg, left_on="id", right_on="deal_id", how="left")
+        bi["activity_count"] = bi["activity_count"].fillna(0).astype("Int16")
+        bi["last_activity_due_date"] = pd.to_datetime(
+            bi["last_activity_due_date"], utc=True
         )
     else:
-        bi_df['contact_name'] = pd.NA
-        bi_df['contact_email'] = pd.NA
-        bi_df['contact_phone'] = pd.NA
+        bi[["activity_count", "last_activity_due_date"]] = [pd.NA, pd.NaT]
 
-    # -- Flatten company_name --
-    if 'org_id' in bi_df.columns and not companies_df.empty:
-        companies_min = companies_df.rename(columns={
-            'id': 'org_id',
-            'name': 'company_name'
-        }, errors="ignore")
-        bi_df = bi_df.merge(
-            companies_min[['org_id', 'company_name']].drop_duplicates('org_id'),
-            on='org_id', how='left'
-        )
-    else:
-        bi_df['company_name'] = pd.NA
+    # ── Métricas derivadas ───────────────────
+    bi["add_time"] = pd.to_datetime(bi["add_time"], utc=True, errors="coerce")
+    bi["close_time"] = pd.to_datetime(bi["close_time"], utc=True, errors="coerce")
+    _vectorized_value_per_day(bi)
 
-    # -- Aggregate activities (contagem + última due_date) --
-    if not activities_df.empty and 'deal_id' in activities_df.columns:
-        activities_df['due_date'] = pd.to_datetime(activities_df['due_date'], errors='coerce', utc=True)
-        agg = activities_df.groupby('deal_id').agg(
-            activity_count=('id', 'count'),
-            last_activity_due_date=('due_date', 'max')
-        ).reset_index()
-        bi_df = bi_df.merge(agg, left_on='id', right_on='deal_id', how='left')
-        bi_df['activity_count'] = bi_df['activity_count'].fillna(0).astype('Int16')
-        bi_df['last_activity_due_date'] = pd.to_datetime(bi_df['last_activity_due_date'], errors='coerce', utc=True)
-        bi_df.drop(columns=['deal_id'], inplace=True, errors='ignore')
-    else:
-        bi_df['activity_count'] = pd.NA
-        bi_df['last_activity_due_date'] = pd.NaT
+    # ── PK & limpeza ─────────────────────────
+    # 1) descarta 'deal_id' redundante (gerado pelo merge)
+    if "deal_id" in bi.columns:
+        bi.drop(columns="deal_id", inplace=True)
 
-    # -- Calcula métricas adicionais --
-    bi_df['close_time_dt'] = pd.to_datetime(bi_df.get('close_time'), errors='coerce', utc=True)
-    bi_df['add_time_dt'] = pd.to_datetime(bi_df.get('add_time'), errors='coerce', utc=True)
-    if 'close_time_dt' in bi_df and 'add_time_dt' in bi_df:
-        duration = (bi_df['close_time_dt'] - bi_df['add_time_dt']).dt.days.astype('Int16')
-        bi_df['deal_duration_days'] = duration
-    else:
-        bi_df['deal_duration_days'] = pd.NA
-    if 'value' in bi_df:
-        bi_df['value_num'] = pd.to_numeric(bi_df['value'], errors='coerce')
-        bi_df['value_per_day'] = bi_df.apply(
-            lambda row: row['value_num'] / row['deal_duration_days']
-            if pd.notna(row['value_num']) and pd.notna(row['deal_duration_days']) and row['deal_duration_days'] > 0
-            else np.nan, axis=1
-        )
-        bi_df['value_per_day'] = bi_df['value_per_day'].replace([np.inf, -np.inf], np.nan).astype('float64')
-        bi_df.drop(columns=['value_num'], inplace=True, errors='ignore')
-    else:
-        bi_df['value_per_day'] = np.nan
-    bi_df.drop(columns=['close_time_dt', 'add_time_dt'], inplace=True, errors='ignore')
+    # 2) renomeia id → deal_id (PK)
+    bi.rename(columns={"id": PK}, inplace=True)
 
-    # -- Ajuste final PK --
-    if 'id' in bi_df.columns:
-        bi_df.rename(columns={'id': bi_target_pk}, inplace=True)
+    # 3) remove FKs que não precisamos manter no BI
+    bi.drop(columns=["person_id", "org_id"], inplace=True, errors="ignore")
 
-    # -- Limpa colunas intermediárias --
-    drop_cols = ['person_id', 'org_id']
-    bi_df.drop(columns=[c for c in drop_cols if c in bi_df.columns], inplace=True, errors='ignore')
+    logger.info("BI shape %s", bi.shape)
+    return bi
 
-    logger.info(f"BI DataFrame shape after all merges: {bi_df.shape}")
-    return bi_df
 
+# ──────────────────────────────────────────────────────────
+# Flow principal
+# ──────────────────────────────────────────────────────────
 @flow(name="Main BI Transformation Flow")
-def main_bi_transformation_flow():
+def main_bi_transformation_flow() -> None:
     logger = get_run_logger()
-    flow_name_label = "BITransformationSync"
-    metrics.etl_counter.labels(flow_type=flow_name_label).inc()
-    start_time_flow = time.time()
-    flow_run_id_value = "unknown_flow_run"
+    label = "BITransformationSync"
 
-    logger.info("Starting Main BI Transformation Flow...")
+    metrics.etl_counter.labels(flow_type=label).inc()
+    start = time.time()
+
+    logger.info("=== Starting Main BI Transformation Flow ===")
 
     try:
-        # 1. Carrega tabelas já enriquecidas
-        data = load_bi_sources()
+        data   = load_bi_sources()
+        bi_df  = transform_and_aggregate_bi(data)
 
-        # 2. Agrega/transforma dados para BI
-        bi_df = transform_and_aggregate_bi(
-            deals_df=data.get('deals', pd.DataFrame()),
-            contacts_df=data.get('contacts', pd.DataFrame()),
-            companies_df=data.get('companies', pd.DataFrame()),
-            activities_df=data.get('activities', pd.DataFrame())
-        )
-
-        # 3. Salva resultado final
-        if not bi_df.empty and bi_target_pk in bi_df.columns:
-            logger.info(f"Saving {len(bi_df)} rows to BI target table: {bi_target_repo.table_name}")
-            bi_target_repo.save(bi_df)
-            metrics.records_processed_counter.labels(flow_type=flow_name_label).inc(len(bi_df))
+        if not bi_df.empty and PK in bi_df.columns:
+            logger.info("Persisting %s rows to %s", len(bi_df), BI_TABLE)
+            bi_repo.save(bi_df)
+            metrics.records_processed_counter.labels(flow_type=label).inc(len(bi_df))
         else:
-            logger.warning("Final BI DataFrame is empty or missing primary key. Nothing to save.")
+            logger.warning("Nothing to save – empty DataFrame or PK missing.")
 
-        metrics.etl_last_successful_run_timestamp.labels(flow_type=flow_name_label).set_to_current_time()
-        logger.info("Main BI Transformation Flow completed successfully.")
+        metrics.etl_last_successful_run_timestamp.labels(flow_type=label).set_to_current_time()
+        logger.info("=== Flow completed OK ===")
 
-    except Exception as e:
-        metrics.etl_failure_counter.labels(flow_type=flow_name_label).inc()
-        logger.error(f"Main BI Transformation Flow failed: {str(e)}", exc_info=True)
+    except Exception as exc:
+        metrics.etl_failure_counter.labels(flow_type=label).inc()
+        logger.exception("Flow failed: %s", exc)
         raise
+
     finally:
-        duration_flow = time.time() - start_time_flow
-        metrics.etl_duration_hist.labels(flow_type=flow_name_label).observe(duration_flow)
+        # housekeeping
+        duration = time.time() - start
+        metrics.etl_duration_hist.labels(flow_type=label).observe(duration)
+
         try:
-            pg_pool = get_postgres_conn()
-            if pg_pool:
-                metrics.db_active_connections.set(pg_pool.active)
-                metrics.db_idle_connections.set(pg_pool.idle)
-        except Exception as db_e:
-            logger.warning(f"Could not set DB pool metrics for {flow_name_label}: {db_e}")
+            pool = get_postgres_conn()
+            if pool:
+                metrics.db_active_connections.set(pool.active)
+                metrics.db_idle_connections.set(pool.idle)
+        except Exception:
+            logger.debug("DB pool metrics unavailable.", exc_info=True)
 
         metrics.update_uptime()
-        metrics.etl_heartbeat.labels(flow_type=flow_name_label).set_to_current_time()
+        metrics.etl_heartbeat.labels(flow_type=label).set_to_current_time()
 
-        try:
-            flow_run_id_value = flow_run.id
-            if flow_run_id_value is None:
-                logger.warning("flow_run.id retornou None. Usando 'unknown_flow_run_runtime_none'.")
-                flow_run_id_value = "unknown_flow_run_runtime_none"
-            else:
-                flow_run_id_value = str(flow_run_id_value)
-        except Exception as e_ctx:
-            logger.error(f"Erro ao tentar obter flow_run_id via flow_run.id: {e_ctx}", exc_info=True)
-            flow_run_id_value = "unknown_flow_run_exception"
-
+        run_id = getattr(flow_run, "id", "unknown") or "unknown"
         metrics.push_metrics_to_gateway(
             job_name="pipedrive_bi_etl",
-            grouping_key={'flow_name': flow_name_label, 'instance': flow_run_id_value}
+            grouping_key={"flow_name": label, "instance": str(run_id)},
         )
+
+        # libera RAM
+        del data, bi_df
+        gc.collect()

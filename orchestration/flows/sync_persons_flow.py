@@ -1,156 +1,125 @@
-from datetime import datetime, timezone as dt_timezone
-from prefect import flow, get_run_logger
-from prefect.runtime import flow_run
-from infrastructure.repositories.dependent_entities import PERSONS_DEPENDENT_ENTITIES_CONFIG
-from orchestration.common.utils import (
-    get_last_successful_run_ts,
-    update_last_successful_run_ts,
-    has_recent_updates_in_dependencies,
-)
-from core.schemas import Person, PersonField
-from infrastructure.repositories import RepositorioBase, SchemaConfig, enrich_with_lookups_sql
-from infrastructure.repositories.lookups import PERSONS_LOOKUP_MAPPINGS
-from orchestration.common.synchronizer import PipedriveEntitySynchronizer
-from orchestration.common import utils
-from infrastructure.observability import metrics
-from infrastructure.db.postgres_adapter import get_postgres_conn
+"""Prefect 2 – Sync /persons  ➜  pessoas"""
+from __future__ import annotations
+
 import time
+from datetime import datetime
+from typing import Dict
+
+from prefect import flow, get_run_logger
+
+from core.schemas import Person, PersonField
+from infrastructure.db.postgres_adapter import get_postgres_conn
+from infrastructure.observability import metrics
+from infrastructure.repositories import (
+    RepositorioBase,
+    SchemaConfig,
+    enrich_with_lookups_sql,
+)
+from infrastructure.repositories.lookups import PERSONS_LOOKUP_MAPPINGS
+from infrastructure.repositories.dependent_entities import PERSONS_DEPENDENT_ENTITIES_CONFIG
+from orchestration.common.compute_updated_since import compute_updated_since
+from orchestration.common.synchronizer import PipedriveEntitySynchronizer
+from orchestration.common.types import TYPES_CLEAN
+from orchestration.common import utils
+
+
+_TYPES: Dict[str, str] = {
+    k: TYPES_CLEAN[k] for k in ("label_ids", "picture_id", "org_id", "owner_id")
+}
+_CORE_COLS = [
+    "id",
+    "owner_id",
+    "name",
+    "first_name",
+    "last_name",
+    "add_time",
+    "update_time",
+    "visible_to",
+    "birthday",
+    "job_title",
+]
+_SPECIFIC = {
+    "emails": {
+        "function": utils.explode_list_column,
+        "slug_name": "email_contatos",
+        "params": {"value_key": "value", "label_key": "label", "primary_key": "primary"},
+    },
+    "phones": {
+        "function": utils.explode_list_column,
+        "slug_name": "telefone_contatos",
+        "params": {"value_key": "value", "label_key": "label", "primary_key": "primary"},
+    },
+    "postal_address": {
+        "function": utils.explode_address,
+        "slug_name": "endereco_contato",
+    },
+}
+
 
 @flow(name="Sync Pipedrive Persons")
-def sync_pipedrive_persons_flow():
-    logger = get_run_logger()
-    flow_name_label = "PersonsSync"
-    metrics.etl_counter.labels(flow_type=flow_name_label).inc()
-    start_time_flow = time.time()
-    processed_count = 0
-    updated_since_val = None
+def sync_pipedrive_persons_flow() -> None:
+    log   = get_run_logger()
+    label = "PersonsSync"
+    start = time.time()
+
+    metrics.etl_counter.labels(flow_type=label).inc()
+
+    upd_since_iso, full = compute_updated_since(
+        flow_id=label,
+        deps_cfg=PERSONS_DEPENDENT_ENTITIES_CONFIG,
+        logger=log,
+    )
+    log.info("sync mode → %s (updated_since=%s)",
+             "FULL" if full else "INCREMENTAL",
+             upd_since_iso)
 
     try:
-        # Verifica dependências
-        with get_postgres_conn().connection() as conn:
-            with conn.cursor() as cur:
-                last_success_ts = get_last_successful_run_ts(flow_name_label, cur)
-                logger.info(f"Último sucesso em {last_success_ts} para o flow {flow_name_label}")
-
-                if last_success_ts:
-                    deps_have_updates = has_recent_updates_in_dependencies(
-                        dependent_config=PERSONS_DEPENDENT_ENTITIES_CONFIG,
-                        since_timestamp=last_success_ts,
-                        conn=conn,
-                        logger=logger
-                    )
-                    if not deps_have_updates:
-                        updated_since_val = last_success_ts.astimezone(dt_timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-                        logger.info(f"Rodando persons em modo incremental (updated_since={updated_since_val})")
-                    else:
-                        logger.info("Dependências alteradas desde a última execução. Rodando full sync.")
-
-        # Instanciação do repo e synchronizer igual ao seu código original...
-        person_repo = RepositorioBase(
-            table_name="pessoas",
-            schema_config=SchemaConfig(
-                pk=['id'],
-                types={
-                    'label_ids': 'JSONB',
-                    'picture_id': 'BIGINT',
-                    'org_id': 'BIGINT',
-                    'owner_id': 'BIGINT',
-                },
-                indexes=['owner_id', 'org_id', 'update_time', 'add_time', 'name'],
-                allow_column_dropping=True
-            )
+        repo = RepositorioBase(
+            "pessoas",
+            SchemaConfig(
+                pk=["id"],
+                types=_TYPES,
+                indexes=["owner_id", "update_time", "add_time", "name", "cpf_cnpj_text"],
+                allow_column_dropping=True,
+            ),
         )
-        person_core_columns = [
-            'id', 'company_id', 'owner_id', 'org_id', 
-            'name', 'first_name', 'last_name', 
-            'add_time', 'update_time', 'active_flag', 'visible_to', 'cc_email',
-            'birthday', 'job_title'
-        ]
-        person_specific_handlers = {
-            'emails': {
-                'function': utils.explode_list_column,
-                'slug_name': 'email_contatos',
-                'params': {'value_key': 'value', 'label_key': 'label', 'primary_key': 'primary'}
-            },
-            'phones': {
-                'function': utils.explode_list_column,
-                'slug_name': 'telefone_contatos',
-                'params': {'value_key': 'value', 'label_key': 'label', 'primary_key': 'primary'}
-            },
-            'postal_address': {
-                'function': utils.explode_address,
-                'slug_name': 'endereco_contato'
-            }
-        }
-        persons_synchronizer = PipedriveEntitySynchronizer(
+
+        syncer = PipedriveEntitySynchronizer(
             entity_name="Person",
             pydantic_model_main=Person,
-            repository=person_repo,
+            repository=repo,
             api_endpoint_main="/persons",
             api_endpoint_fields="/personFields",
             pydantic_model_field=PersonField,
-            core_columns=person_core_columns,
-            specific_field_handlers=person_specific_handlers,
-            utils_module=utils
+            core_columns=_CORE_COLS,
+            specific_field_handlers=_SPECIFIC,
+            
         )
 
-        logger.info("Starting Pipedrive Persons synchronization flow...")
-        processed_count = persons_synchronizer.run_sync(updated_since_val=updated_since_val)
-        logger.info(f"Pipedrive Persons synchronization flow completed. Processed {processed_count} records.")
-        metrics.etl_last_successful_run_timestamp.labels(flow_type=flow_name_label).set_to_current_time()
+        total = syncer.run_sync(updated_since=upd_since_iso)
+        log.info("✔ Persons finished – %s registros", total)
 
-        # Atualiza timestamp de execução bem-sucedida
         with get_postgres_conn().connection() as conn:
-            with conn.cursor() as cur:
-                update_last_successful_run_ts(flow_name_label, datetime.now(dt_timezone.utc), cur)
+            enrich_with_lookups_sql(
+                table="pessoas",
+                lookups_mapping=PERSONS_LOOKUP_MAPPINGS,
+                connection=conn,
+                logger=log,
+            )
+
+        if repo.schema_config.allow_column_dropping:
+            repo.drop_fully_null_columns(protected=_CORE_COLS)
+
+        with get_postgres_conn().connection() as conn, conn.cursor() as cur:
+            utils.update_last_successful_run_ts(label, datetime.utcnow(), cur)
             conn.commit()
 
-        # Enrichment pós-sync
-        try:
-            with get_postgres_conn().connection() as conn:
-                enrich_with_lookups_sql(
-                    table='pessoas',
-                    lookups_mapping=PERSONS_LOOKUP_MAPPINGS,
-                    connection=conn,
-                    logger=logger
-                )
-        except Exception as e_enrich:
-            logger.warning(f"Persons lookup enrichment (SQL) failed: {e_enrich}")
+        metrics.etl_last_successful_run_timestamp.labels(flow_type=label).set_to_current_time()
 
-        if person_repo.schema_config.allow_column_dropping:
-            logger.info(f"Attempting to drop fully null columns from '{person_repo.table_name}' table...")
-            try:
-                person_repo.drop_fully_null_columns(protected=person_core_columns)
-                logger.info(f"Drop fully null columns for '{person_repo.table_name}' completed.")
-            except Exception as e_drop:
-                logger.error(f"Failed to drop fully null columns for '{person_repo.table_name}': {str(e_drop)}", exc_info=True)
-    except Exception as e:
-        metrics.etl_failure_counter.labels(flow_type=flow_name_label).inc()
-        logger.error(f"Pipedrive Persons synchronization flow failed: {str(e)}", exc_info=True)
+    except Exception:
+        metrics.etl_failure_counter.labels(flow_type=label).inc()
+        log.exception("Persons flow failed")
         raise
+
     finally:
-        duration_flow = time.time() - start_time_flow
-        metrics.etl_duration_hist.labels(flow_type=flow_name_label).observe(duration_flow)
-        try:
-            pg_pool = get_postgres_conn()
-            if pg_pool:
-                metrics.db_active_connections.set(pg_pool.active)
-                metrics.db_idle_connections.set(pg_pool.idle)
-        except Exception as db_e:
-            logger.warning(f"Could not set DB pool metrics for {flow_name_label}: {db_e}")
-        metrics.update_uptime()
-        metrics.etl_heartbeat.labels(flow_type=flow_name_label).set_to_current_time()
-        try:
-            flow_run_id_value = flow_run.id
-            if flow_run_id_value is None:
-                logger.warning("flow_run.id retornou None. Usando 'unknown_flow_run_runtime_none'.")
-                flow_run_id_value = "unknown_flow_run_runtime_none"
-            else:
-                flow_run_id_value = str(flow_run_id_value)
-        except Exception as e_ctx:
-            logger.error(f"Erro ao tentar obter flow_run_id via flow_run.id: {e_ctx}", exc_info=True)
-            flow_run_id_value = "unknown_flow_run_exception"
-        metrics.push_metrics_to_gateway(
-            job_name="pipedrive_etl", 
-            grouping_key={'flow_name': flow_name_label, 'instance': flow_run_id_value}
-        )
+        utils.finish_flow_metrics(label, start, log)

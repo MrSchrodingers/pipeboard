@@ -1,9 +1,15 @@
-# Ignorar todos os diretórios __pycache__
+# Ignorar todos os diretórios __pycache__ e cache
 **/__pycache__/
 /__pycache/
+.ruff_cache
+.mypy_cache
 
 # Ignorar arquivos específicos
 .qodo
+
+# Ignorar variáveis de ambiente
 .env
 
-/docs/*
+# Ignorar documentações de Content e Tree
+/docs/pipeboard_content.json
+/docs/pipeboard_tree.txt

@@ -50,7 +50,7 @@ echo "--- Restarting Docker Compose services ---"
 cd docker
 
 echo "Bringing down existing services, volumes, and removing orphans..."
-docker compose down --volumes --remove-orphans
+# docker compose down --volumes --remove-orphans
 
 echo "Bringing up services in detached mode with --build..."
 # This will use the build contexts defined in docker-compose.yml

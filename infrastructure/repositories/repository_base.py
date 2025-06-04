@@ -1,240 +1,283 @@
+# infrastructure/repositories/base.py
+# -*- coding: utf-8 -*-
+"""
+Infra • Repositório genérico Postgres (CRUD → “upsert” incremental).
+
+Principais características
+───────────────────────────────────────────────────────────────────────────────
+• Cria a tabela on-the-fly (schema + PK + partições).  
+• Migra/expande colunas automaticamente (tipagem forte, JSONB incluso).  
+• Dois modos de escrita      ─  dinâmica (execute_values) ou staging + COPY.  
+• (Opcional) desliga índices durante a carga – speed-up em tabelas grandes.  
+• Otimizações agressivas de DataFrame   (dtypes, sanitização, JSON…).  
+• Funções auxiliares p/ limpeza de colunas 100 % nulas.
+
+Uso básico
+──────────
+repo = RepositorioBase("deals", SchemaConfig(pk=["id"]))
+repo.save(df)                       # upsert incremental
+"""
+
+from __future__ import annotations
+
+# ───────────────────────── Imports
+import csv
 import io
 import json
-from dataclasses import dataclass, field
 import re
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
-import csv
 
 import numpy as np
 import pandas as pd
 import pydantic
 import structlog
-from psycopg2 import sql, errors
+from psycopg2 import sql
 from psycopg2.extras import execute_values
 
 from infrastructure.db.postgres_adapter import get_postgres_conn
 
-logger = structlog.get_logger(__name__)
+_LOG = structlog.get_logger(__name__)
 
-
+# ───────────────────────── Configurações & tipos
 @dataclass
 class PartitioningConfig:
-    method: Optional[Literal["HASH", "RANGE"]] = None
-    key: Optional[str] = None
+    method: Optional[Literal["HASH", "RANGE"]] = None   # hoje só HASH é usado
+    key: Optional[str] = None                           # default = primeiro PK
     num_partitions: int = 4
 
 
 @dataclass
 class SchemaConfig:
     pk: List[str]
-    types: Dict[str, str] = field(default_factory=dict)
-    indexes: List[str] = field(default_factory=list)
+    types: Dict[str, str] = field(default_factory=dict)     # override manual de tipos
+    indexes: List[str] = field(default_factory=list)        # lista “expr1, expr2”
     partitioning: Optional[PartitioningConfig] = None
     allow_column_dropping: bool = True
-    table_options: Optional[str] = None
+    disable_indexes_during_load: bool = True
+    table_options: Optional[str] = None                    # ex: “WITH (fillfactor=80)”
 
 
-class RepositorioBase:
-    PANDAS_TO_PG = {
-        "Int8": "SMALLINT",
-        "Int16": "SMALLINT",
-        "Int32": "INTEGER",
-        "Int64": "BIGINT",
-        "float16": "REAL",
-        "float32": "REAL",
-        "float64": "DOUBLE PRECISION",
-        "Float64": "DOUBLE PRECISION",
-        "bool": "BOOLEAN",
-        "boolean": "BOOLEAN",
-        "object": "TEXT",
-        "string": "TEXT",
-        "category": "TEXT",
-        "datetime64[ns]": "TIMESTAMP WITHOUT TIME ZONE",
-        "datetime64[ns, UTC]": "TIMESTAMP WITH TIME ZONE",
-    }
+# linha de corte: acima disso use COPY-staging
+COPY_THRESHOLD_DEFAULT = 50
 
-    PG_CAST = {
+# Mapping pandas → Postgres
+_PANDAS_TO_PG: Dict[str, str] = {
+    # ints
+    "Int8": "SMALLINT",
+    "Int16": "SMALLINT",
+    "Int32": "INTEGER",
+    "Int64": "BIGINT",
+    # floats
+    "float16": "REAL",
+    "float32": "REAL",
+    "float64": "DOUBLE PRECISION",
+    "Float64": "DOUBLE PRECISION",
+    # misc
+    "bool": "BOOLEAN",
+    "boolean": "BOOLEAN",
+    "object": "TEXT",
+    "string": "TEXT",
+    "category": "TEXT",
+    "datetime64[ns]": "TIMESTAMP WITHOUT TIME ZONE",
+    "datetime64[ns, UTC]": "TIMESTAMP WITH TIME ZONE",
+}
+
+# Simpl. de cast usado no execute_values
+_PG_CAST: Dict[str, str] = {
+    k.split()[0]: v for k, v in {
         "SMALLINT": "smallint",
         "INTEGER": "integer",
         "BIGINT": "bigint",
         "REAL": "real",
         "DOUBLE PRECISION": "double precision",
-        "NUMERIC": "numeric", 
+        "NUMERIC": "numeric",
         "BOOLEAN": "boolean",
         "JSONB": "jsonb",
         "TEXT": "text",
-        "VARCHAR": "varchar", 
+        "VARCHAR": "varchar",
         "CHAR": "char",
         "TIMESTAMP WITHOUT TIME ZONE": "timestamp without time zone",
         "TIMESTAMP WITH TIME ZONE": "timestamp with time zone",
         "DATE": "date",
         "TIME": "time",
-    }
+    }.items()
+}
+
+
+# ───────────────────────── Classe principal
+class RepositorioBase:
+    """
+    Persistência resiliente: cria, migra e faz upsert incremental.
+    """
 
     def __init__(self, table_name: str, schema_config: SchemaConfig):
         self.table_name = table_name
         self.schema_config = schema_config
-        self.staging_table_name_base = f"{table_name}_staging_temp"
-        self.logger = logger.bind(table_name=self.table_name)
+        self._staging_base = f"{table_name}_staging_temp"
+        self.log = _LOG.bind(table=table_name)
+        # caches simples para acelerar lookups repetidos
+        self._pg_type_cache: Dict[tuple[str, str], str] = {}
+        self._pg_cast_cache: Dict[str, str] = {}
 
-    def _sanitize_string_value(self, v: Any) -> Any:
+    # ══════════ helpers de tipagem ══════════
+    def _get_pg_type(self, col: str, pd_type: Any) -> str:
+        """
+        Retorna o tipo PostgreSQL da coluna (override manual ou inferido).
+        """
+        return (self.schema_config.types.get(col)
+                or _PANDAS_TO_PG.get(str(pd_type), "TEXT")).upper()
+
+    @staticmethod
+    def _sanitize_str(v: Any) -> Any:
         return v.replace("\x00", "") if isinstance(v, str) else v
 
     def _safe_json(self, v: Any) -> Optional[str]:
-        def to_serializable(val):
-            # Se for modelo Pydantic
-            if isinstance(val, pydantic.BaseModel):
-                return val.model_dump()
-            # Se for lista, recursivamente converte cada item
-            if isinstance(val, list):
-                return [to_serializable(x) for x in val]
-            # Se for dict, recursivamente converte valores
-            if isinstance(val, dict):
-                return {k: to_serializable(x) for k, x in val.items()}
-            # Se for string, faz sanitize
-            if isinstance(val, str):
-                return self._sanitize_string_value(val)
-            # Se for nan, pd.NA, pd.NaT, None, retorna None
-            if val in (None, pd.NA) or (isinstance(val, float) and np.isnan(val)) or val is pd.NaT:
+        """
+        Serialização segura para JSONB (tratando BaseModel, listas, dicts, NaN, etc).
+        """
+        def to_serializable(x):
+            if isinstance(x, pydantic.BaseModel):
+                return x.model_dump()
+            if isinstance(x, list):
+                return [to_serializable(i) for i in x]
+            if isinstance(x, dict):
+                return {k: to_serializable(i) for k, i in x.items()}
+            if isinstance(x, str):
+                return self._sanitize_str(x)
+            if x in (None, pd.NA) or (isinstance(x, float) and np.isnan(x)) or x is pd.NaT:
                 return None
-            return val
+            return x
 
         try:
-            sanitized = to_serializable(v)
-            return json.dumps(sanitized, ensure_ascii=False, default=str)
-        except Exception as exc:
-            self.logger.warning(
-                "Value not JSON serializable; nullified.",
-                type=type(v), error=str(exc), preview=str(v)[:120],
-            )
+            return json.dumps(to_serializable(v), ensure_ascii=False, default=str)
+        except Exception as exc:  # pragma: no cover – debug only
+            self.log.warning("json-fail", err=str(exc), preview=str(v)[:120])
             return None
 
-    def _convert_value_for_db_adapter(self, v: Any) -> Any:
+    def _convert_val_for_psycopg(self, v: Any, pg_type: str) -> Any:
+        """
+        Converte valores antes de enviar para Psycopg, lidando com JSONB, texto, NaN etc.
+        """
         if isinstance(v, np.generic):
-            return v.item()
+            v = v.item()
         if v is None or (np.isscalar(v) and pd.isna(v)):
             return None
-        if isinstance(v, (list, dict, np.ndarray)):
-            if not isinstance(v, str):
-                return json.dumps(v, ensure_ascii=False, default=str)
+
+        base_type = pg_type.split("(")[0].strip().upper()
+        if base_type == "JSONB":
+            return self._safe_json(v)
+        if base_type in ("TEXT", "VARCHAR", "CHAR"):
+            return self._sanitize_str(str(v))
         return v
 
+    def _get_cast_for(self, pg_type: str) -> str:
+        """
+        Retorna a string de cast para o execute_values (ex: 'integer' ou 'text'),
+        baseada em _PG_CAST. Se não encontrar, retorna pg_type em lowercase.
+        """
+        base = pg_type.split("(")[0].strip().upper()
+        if base not in self._pg_cast_cache:
+            self._pg_cast_cache[base] = _PG_CAST.get(base, base.lower())
+        return self._pg_cast_cache[base]
+
+    # ══════════ DataFrame otimização ══════════
     def _optimize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        df_opt = df.copy()
-        if df_opt.columns.duplicated().any():
+        """
+        Casting, sanitização, unificação de dtypes (rápido e in-place).
+        """
+        df = df.copy()
+
+        # Duplicated columns? → renomeia mantendo todas
+        if df.columns.duplicated().any():
             counts: Dict[str, int] = {}
-            df_opt.columns = [
-                f"{c}__dup{counts.setdefault(c, 0) or counts.update({c: counts[c] + 1}) or counts[c]}"
-                if c in counts else c for c in df_opt.columns
-            ]
-        for col in df_opt.columns:
-            ser = df_opt[col]
-            col_pg_type = self._get_pg_type(col, ser.dtype)
-            
-            if "TIMESTAMP" in col_pg_type or col_pg_type == "DATE":
-                try:
-                    df_opt[col] = pd.to_datetime(ser, errors='coerce', utc=True if "WITH TIME ZONE" in col_pg_type else None)
-                    if col_pg_type == "DATE":
-                         df_opt[col] = df_opt[col].dt.normalize().dt.date 
-                    self.logger.debug(f"Coluna '{col}' convertida para datetime/date pandas.")
-                except Exception as e_conv:
-                    self.logger.warning(f"Falha ao converter coluna '{col}' para datetime/date pandas: {e_conv}. Mantendo como objeto.")
-                
-            if self.schema_config.types.get(col, "").upper() == "JSONB":
-                if not ser.empty:
-                    val_antes = ser.iloc[0]
-                    tipo_antes = type(val_antes)
-                    self.logger.info(f"'{col}' ANTES de apply(_safe_json) - Tipo: {tipo_antes}, Valor (preview): {str(val_antes)[:100]}")
-                
-                coluna_serializada = ser.apply(self._safe_json)
-                df_opt[col] = coluna_serializada.astype(object)
-                
-                if not df_opt[col].empty:
-                    val_depois = df_opt[col].iloc[0]
-                    tipo_depois = type(val_depois)
-                    self.logger.info(f"'{col}' DEPOIS de apply(_safe_json) - Tipo: {tipo_depois}, Valor (preview): {str(val_depois)[:100]}")
-                    if isinstance(val_depois, str):
-                        try:
-                            json.loads(val_depois)
-                            self.logger.info(f"'{col}' DEPOIS - json.loads bem-sucedido para o primeiro valor.")
-                        except json.JSONDecodeError as e_json:
-                            self.logger.error(f"'{col}' DEPOIS - json.loads FALHOU: {e_json}. Valor: {val_depois[:200]}")
-                    elif val_depois is not None:
-                         self.logger.warning(f"'{col}' DEPOIS - Primeiro valor NÃO é string nem None, é {tipo_depois}")
-                continue
+            new_cols = []
+            for c in df.columns:
+                if c in counts:
+                    counts[c] += 1
+                    new_cols.append(f"{c}__dup{counts[c]}")
+                else:
+                    counts[c] = 0
+                    new_cols.append(c)
+            df.columns = new_cols
+
+        for col in df.columns:
+            ser = df[col]
+            pg_type = self._get_pg_type(col, ser.dtype)
+
+            # STRING & SANITIZE
             if ser.dtype == "object" or pd.api.types.is_string_dtype(ser.dtype):
+                df[col] = ser.apply(self._sanitize_str)
+
+            # DATETIME coerente
+            if "TIMESTAMP" in pg_type or pg_type == "DATE":
                 try:
-                    ser = ser.apply(self._sanitize_string_value)
-                    df_opt[col] = ser
-                except Exception as exc:
-                    self.logger.debug("Sanitize failed (%s): %s", col, exc)
-            if ser.dtype == "object":
-                try:
-                    df_opt[col] = pd.to_numeric(ser, errors='ignore')
+                    df[col] = pd.to_datetime(ser, errors="coerce",
+                                             utc="WITH TIME ZONE" in pg_type)
+                    if pg_type == "DATE":
+                        df[col] = df[col].dt.normalize().dt.date
                 except Exception:
-                    pass
-            if df_opt[col].dtype == "object":
-                try:
-                    if df_opt[col].apply(lambda x: isinstance(x, str) or pd.isna(x)).all():
-                        df_opt[col] = df_opt[col].astype("string")
-                except Exception:
-                    pass
-            dt = df_opt[col].dtype
-            if pd.api.types.is_integer_dtype(dt) and not str(dt).startswith("Int"):
-                try: df_opt[col] = df_opt[col].astype(f"Int{dt.itemsize * 8}")
-                except Exception: pass
-            elif pd.api.types.is_float_dtype(dt) and not str(dt).startswith("Float"):
-                try: df_opt[col] = df_opt[col].astype(f"Float{dt.itemsize * 8}")
-                except Exception: pass
-            elif pd.api.types.is_bool_dtype(dt) and str(dt) != "boolean":
-                try: df_opt[col] = df_opt[col].astype("boolean")
-                except Exception: pass
-        return df_opt.replace({pd.NaT: None, np.nan: None, pd.NA: None})
+                    self.log.debug("datetime-fail", col=col, err=str(col))
 
-    def _get_pg_type(self, col: str, pd_type: Any) -> str:
-        if col in self.schema_config.types:
-            return self.schema_config.types[col].upper()
-        return self.PANDAS_TO_PG.get(str(pd_type), "TEXT")
+            # JSONB – serializa já aqui (evita custo na iteração row-a-row)
+            if pg_type == "JSONB":
+                df[col] = ser.apply(self._safe_json).astype(object)
+                continue
 
-    def _column_defs(self, df: pd.DataFrame) -> str:
-        return ", ".join(f'{sql.Identifier(c).as_string(None)} {self._get_pg_type(c, dt)}' for c, dt in df.dtypes.items())
+            # Ajustes numéricos automáticos
+            if pd.api.types.is_integer_dtype(df[col]) and not str(df[col].dtype).startswith("Int"):
+                df[col] = df[col].astype(f"Int{df[col].dtype.itemsize * 8}", errors="ignore")
+            elif pd.api.types.is_float_dtype(df[col]) and not str(df[col].dtype).startswith("Float"):
+                df[col] = df[col].astype(f"Float{df[col].dtype.itemsize * 8}", errors="ignore")
+            elif pd.api.types.is_bool_dtype(df[col]) and str(df[col].dtype) != "boolean":
+                df[col] = df[col].astype("boolean", errors="ignore")
 
+        return df.replace({pd.NaT: None, np.nan: None, pd.NA: None})
+
+    # ═════════════ Schema management ═════════════
     def _create_table(self, cur, df: pd.DataFrame) -> None:
+        """
+        Cria a tabela (se não existir), com PK e partições.  
+        Verifica se todas as PKs estão no DataFrame, senão lança ValueError.
+        """
         missing = [pk for pk in self.schema_config.pk if pk not in df.columns]
         if missing:
             raise ValueError(f"PK(s) ausentes no DataFrame: {missing}")
 
-        pk_sql_parts = [sql.Identifier(pk).as_string(cur) for pk in self.schema_config.pk]
-        pk_sql = ", ".join(pk_sql_parts)
-
-        part_sql_str = "" 
+        pk_sql = sql.SQL(", ").join(map(sql.Identifier, self.schema_config.pk))
         pconf = self.schema_config.partitioning
-        if pconf and pconf.method == "HASH":
-            key = pconf.key or self.schema_config.pk[0]
-            part_sql_str = f'PARTITION BY HASH ({sql.Identifier(key).as_string(cur)})'
-        
-        cols_sql_str = ", ".join(
-            f"{sql.Identifier(c).as_string(cur)} {self._get_pg_type(c, dt)}" 
-            for c, dt in df.dtypes.items()
+        part_sql = (
+            sql.SQL("PARTITION BY HASH ({})").format(
+                sql.Identifier(pconf.key or self.schema_config.pk[0])
+            )
+            if pconf and pconf.method == "HASH"
+            else sql.SQL("")
         )
 
-        create_sql = sql.SQL(
-            "CREATE TABLE IF NOT EXISTS {tbl} ({cols}, PRIMARY KEY ({pk})) {part} {opts};"
-        ).format(
-            tbl=sql.Identifier(self.table_name),
-            cols=sql.SQL(cols_sql_str),
-            pk=sql.SQL(pk_sql), 
-            part=sql.SQL(part_sql_str),
-            opts=sql.SQL(self.schema_config.table_options or ""),
+        cols_def = sql.SQL(", ").join(
+            sql.SQL("{} {}").format(sql.Identifier(col), sql.SQL(self._get_pg_type(col, dtype)))
+            for col, dtype in df.dtypes.items()
         )
-        self.logger.debug("Executing CREATE TABLE IF NOT EXISTS", sql_statement=create_sql.as_string(cur))
-        cur.execute(create_sql)
-        
+
+        cur.execute(
+            sql.SQL(
+                "CREATE TABLE IF NOT EXISTS {t} ({cols}, PRIMARY KEY ({pk})) {part} {opts};"
+            ).format(
+                t=sql.Identifier(self.table_name),
+                cols=cols_def,
+                pk=pk_sql,
+                part=part_sql,
+                opts=sql.SQL(self.schema_config.table_options or ""),
+            )
+        )
+
+        # cria sub-partições (HASH)
         if pconf and pconf.method == "HASH":
             for i in range(pconf.num_partitions):
                 cur.execute(
                     sql.SQL(
-                        'CREATE TABLE IF NOT EXISTS {p} PARTITION OF {t} FOR VALUES WITH (MODULUS {m}, REMAINDER {r});'
+                        "CREATE TABLE IF NOT EXISTS {p} PARTITION OF {t} "
+                        "FOR VALUES WITH (MODULUS {m}, REMAINDER {r});"
                     ).format(
                         p=sql.Identifier(f"{self.table_name}_p{i}"),
                         t=sql.Identifier(self.table_name),
@@ -244,262 +287,290 @@ class RepositorioBase:
                 )
 
     def _schema_migration(self, cur, df: pd.DataFrame) -> None:
+        """
+        Adiciona/ajusta colunas que mudaram de tipo.
+        Lê information_schema, compara tipos e:
+        1) Se a coluna não existir → ALTER TABLE ADD COLUMN
+        2) Se existir mas tipo diferente e não for PK → ALTER TABLE ALTER COLUMN TYPE
+        """
         cur.execute(
-            "SELECT column_name, data_type FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = %s",
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = %s
+            """,
             (self.table_name,),
         )
-        existing = {row[0]: row[1].upper() for row in cur.fetchall()}
-        pk_and_part = set(self.schema_config.pk)
+        existing = {n: t.upper() for n, t in cur.fetchall()}
+        protected = {*self.schema_config.pk}
         if self.schema_config.partitioning and self.schema_config.partitioning.key:
-            pk_and_part.add(self.schema_config.partitioning.key)
+            protected.add(self.schema_config.partitioning.key)
 
         for col in df.columns:
-            expected_type = self._get_pg_type(col, df[col].dtype)
+            pg_type_expected = self._get_pg_type(col, df[col].dtype)
             if col not in existing:
-                self.logger.info(f"Adicionando coluna '{col}' com tipo '{expected_type}' à tabela '{self.table_name}'.")
                 cur.execute(
-                    sql.SQL('ALTER TABLE {t} ADD COLUMN {c} {tp}').format( 
+                    sql.SQL("ALTER TABLE {t} ADD COLUMN {c} {tp}").format(
                         t=sql.Identifier(self.table_name),
                         c=sql.Identifier(col),
-                        tp=sql.SQL(expected_type),
+                        tp=sql.SQL(pg_type_expected),
                     )
                 )
-            elif col not in pk_and_part and existing[col] != expected_type:
-                self.logger.info(f"Tentando alterar tipo da coluna '{col}' de '{existing[col]}' para '{expected_type}' na tabela '{self.table_name}'.")
+            elif col not in protected and existing[col] != pg_type_expected:
+                # tentativa de ALTER … USING cast
                 try:
                     cur.execute(
                         sql.SQL(
-                            'ALTER TABLE {t} ALTER COLUMN {c} TYPE {tp} USING {c_raw}::{tp_raw}'
+                            "ALTER TABLE {t} ALTER COLUMN {c} TYPE {tp} "
+                            "USING {c}::{tp}"
                         ).format(
                             t=sql.Identifier(self.table_name),
                             c=sql.Identifier(col),
-                            tp=sql.SQL(expected_type),
-                            c_raw=sql.Identifier(col), 
-                            tp_raw=sql.SQL(expected_type) 
+                            tp=sql.SQL(pg_type_expected),
                         )
                     )
-                except Exception as e_alter:
-                    self.logger.error(
-                        f"FALHA AO ALTERAR COLUNA '{col}' de '{existing[col]}' para '{expected_type}'. "
-                        f"Erro: {e_alter}. Dados na coluna podem ser incompatíveis. "
-                        f"Verifique SchemaConfig.types ou limpe dados na origem.",
-                        col_data_preview=df[col].dropna().head(3).to_list() if col in df and not df[col].dropna().empty else "N/A"
+                except Exception as exc:
+                    self.log.error(
+                        "type-migrate-fail",
+                        col=col,
+                        from_=existing[col],
+                        to=pg_type_expected,
+                        err=str(exc),
                     )
                     raise
 
-
-    def _get_cast_type_for_execute_values(self, pg_type_full: str) -> str:
-        pg_type_base = pg_type_full.split('(')[0].strip().upper()
-        return self.PG_CAST.get(pg_type_base, pg_type_full.lower())
-
-    def _convert_value_for_db_processing(self, value: Any, pg_target_type: str) -> Any:
-        if isinstance(value, np.generic):
-            value = value.item()
-
-        is_null_or_na = False
-        if value is None:
-            is_null_or_na = True
-        elif isinstance(value, float) and np.isnan(value): 
-            is_null_or_na = True
-        elif hasattr(value, '__iter__') and not isinstance(value, (str, bytes, dict)):
-            try:
-                if len(value) == 0: 
-                    is_null_or_na = True
-            except TypeError: 
-                pass 
-        elif pd.isna(value):
-             is_null_or_na = True
-        
-        if is_null_or_na:
-            return None
-
-        pg_target_type_base = pg_target_type.split('(')[0].strip().upper()
-        if pg_target_type_base in ("TEXT", "VARCHAR", "CHAR"):
-            if not isinstance(value, str):
-                return str(value) 
-            return self._sanitize_string_value(value)
-
-        if pg_target_type_base == "JSONB" and isinstance(value, (list, dict)):
-             return self._safe_json(value)
-
-        return value
-    
-    def _upsert_dynamic(self, conn, cur, df: pd.DataFrame) -> None:
-        if df.empty: return
+    # ═════════════ Upsert strategies ═════════════
+    # -- execute_values (rápido < COPY_THRESHOLD_DEFAULT filas)
+    def _upsert_dynamic(self, cur, df: pd.DataFrame) -> None:
+        """
+        Estratégia para DataFrames pequenos: usa execute_values para inserção
+        com ON CONFLICT … DO UPDATE.
+        """
         cols = list(df.columns)
-        
-        tmpl_parts = []
-        pg_col_types = {c: self._get_pg_type(c, df[c].dtype) for c in cols}
+        pg_types = {c: self._get_pg_type(c, df[c].dtype) for c in cols}
 
-        for c in cols:
-            pg_type_full = pg_col_types[c]
-            cast_signature = self._get_cast_type_for_execute_values(pg_type_full)
-            tmpl_parts.append(f"%s::{cast_signature}")
-        
-        tmpl = "(" + ", ".join(tmpl_parts) + ")"
-        
-        rows = []
-        for r_tuple in df.itertuples(index=False, name=None):
-            processed_row = []
-            for idx, col_name in enumerate(cols):
-                value = r_tuple[idx]
-                pg_target_type_for_col = pg_col_types[col_name] 
-                processed_value = self._convert_value_for_db_processing(value, pg_target_type_for_col)
-                processed_row.append(processed_value)
-            rows.append(tuple(processed_row))
-        
-        set_sql_parts = [sql.SQL("{c} = EXCLUDED.{c}").format(c=sql.Identifier(c)) for c in cols if c not in self.schema_config.pk]
-        
-        action_sql = sql.SQL("NOTHING") if not set_sql_parts else sql.SQL("UPDATE SET ") + sql.SQL(", ").join(set_sql_parts)
+        # Template de cast (ex: %s::integer, %s::text, etc)
+        tmpl = "(" + ", ".join(
+            f"%s::{self._get_cast_for(pg_types[c])}"
+            for c in cols
+        ) + ")"
 
-        stmt = sql.SQL(
-            "INSERT INTO {t} ({cols_ident}) VALUES %s ON CONFLICT ({pk_ident}) DO {action}"
-        ).format(
-            t=sql.Identifier(self.table_name),
-            cols_ident=sql.SQL(", ").join(map(sql.Identifier, cols)),
-            pk_ident=sql.SQL(", ").join(map(sql.Identifier, self.schema_config.pk)),
-            action=action_sql,
+        # Converte cada valor via _convert_val_for_psycopg
+        rows = [
+            tuple(self._convert_val_for_psycopg(v, pg_types[c])
+                  for v, c in zip(row, cols))
+            for row in df.itertuples(index=False, name=None)
+        ]
+
+        set_parts = [
+            sql.SQL("{c}=EXCLUDED.{c}").format(c=sql.Identifier(c))
+            for c in cols if c not in self.schema_config.pk
+        ]
+        on_conflict = (
+            sql.SQL("NOTHING")
+            if not set_parts
+            else sql.SQL("UPDATE SET ") + sql.SQL(", ").join(set_parts)
         )
 
-        if self.table_name == "usuarios":
-            self.logger.info(
-                "DEBUG UPSERT_DYNAMIC (usuarios): Pre-Execute",
-                num_rows=len(rows),
-                template=tmpl,
-                columns_and_target_pg_types=" | ".join([f"Col: '{c}', PGType: '{pg_col_types[c]}'" for c in cols]),
-                first_row_processed_data_sample=rows[0] if rows else "N/A",
-            )
+        stmt = sql.SQL(
+            "INSERT INTO {t} ({cols}) VALUES %s "
+            "ON CONFLICT ({pk}) DO {act}"
+        ).format(
+            t=sql.Identifier(self.table_name),
+            cols=sql.SQL(", ").join(map(sql.Identifier, cols)),
+            pk=sql.SQL(", ").join(map(sql.Identifier, self.schema_config.pk)),
+            act=on_conflict,
+        )
 
         execute_values(cur, stmt, rows, template=tmpl, page_size=250)
 
-    def _upsert_staging(self, conn, cur, df: pd.DataFrame) -> None:
-        if df.empty: return
-        tmp_name = f"{self.staging_table_name_base}_{pd.Timestamp.utcnow():%Y%m%d%H%M%S%f}"
-        ident_tmp = sql.Identifier(tmp_name)
-        
-        cols_sql_str_staging = ", ".join(
-            f"{sql.Identifier(c).as_string(cur)} {self._get_pg_type(c, dt)}" 
+    # -- COPY → staging (alto volume)
+    def _upsert_staging(self, cur, df: pd.DataFrame) -> None:
+        """
+        Estratégia high-volume: cria um staging TEMPORARY com
+        **o mesmo schema do DataFrame**, faz COPY e depois faz
+        MERGE (UPDATE + INSERT).
+        """
+        tmp = f"{self._staging_base}_{pd.Timestamp.utcnow():%Y%m%d%H%M%S%f}"
+        ident_tmp = sql.Identifier(tmp)
+
+        # 1) cria staging com colunas == df.columns (NÃO usa LIKE)
+        cols_def = ", ".join(
+            f"{sql.Identifier(c).as_string(cur)} {self._get_pg_type(c, dt)}"
             for c, dt in df.dtypes.items()
         )
         cur.execute(
-            sql.SQL("CREATE TEMP TABLE {tmp} ({cols}) ON COMMIT DROP").format(
-                tmp=ident_tmp, cols=sql.SQL(cols_sql_str_staging)
-            )
+            sql.SQL(
+                "CREATE TEMP TABLE {tmp} ({cols}) ON COMMIT DROP"
+            ).format(tmp=ident_tmp, cols=sql.SQL(cols_def))
         )
+
+        # 2) COPY CSV → staging
         buf = io.StringIO()
-        df.to_csv(buf, index=False, header=False, sep=",", na_rep="", quoting=csv.QUOTE_MINIMAL, escapechar="\\")
+        df.to_csv(
+            buf, index=False, header=False, sep=",", na_rep="",
+            quoting=csv.QUOTE_MINIMAL, escapechar="\\"
+        )
         buf.seek(0)
         cur.copy_expert(
-            sql.SQL("COPY {tmp} FROM STDIN WITH (FORMAT CSV, NULL '', DELIMITER ',', QUOTE '\"', ESCAPE '\\')").format(tmp=ident_tmp),
+            sql.SQL(
+                "COPY {tmp} FROM STDIN WITH (FORMAT CSV, NULL '', DELIMITER ',', QUOTE '\"', ESCAPE '\\')"
+            ).format(tmp=ident_tmp),
             buf,
         )
+
+        # 3) UPDATE registros que já existem
         not_pk = [c for c in df.columns if c not in self.schema_config.pk]
         if not_pk:
-            set_clause = sql.SQL(", ").join(sql.SQL('{c}=s.{c}').format(c=sql.Identifier(col)) for col in not_pk)
-            join_cond_update = sql.SQL(" AND ").join(sql.SQL('t.{p}=s.{p}').format(p=sql.Identifier(pk)) for pk in self.schema_config.pk)
             cur.execute(
-                sql.SQL("UPDATE {t} t SET {set} FROM {tmp} s WHERE {join}").format(
-                    t=sql.Identifier(self.table_name), set=set_clause, tmp=ident_tmp, join=join_cond_update,
+                sql.SQL(
+                    "UPDATE {t} AS tgt SET {set_cols} "
+                    "FROM {tmp} AS src "
+                    "WHERE {join}"
+                ).format(
+                    t=sql.Identifier(self.table_name),
+                    tmp=ident_tmp,
+                    set_cols=sql.SQL(", ").join(
+                        sql.SQL("{c}=src.{c}").format(c=sql.Identifier(c))
+                        for c in not_pk
+                    ),
+                    join=sql.SQL(" AND ").join(
+                        sql.SQL("tgt.{pk}=src.{pk}").format(pk=sql.Identifier(pk))
+                        for pk in self.schema_config.pk
+                    ),
                 )
             )
-        cols_ident_insert = sql.SQL(", ").join(map(sql.Identifier, df.columns))
-        join_cond_insert = sql.SQL(" AND ").join(sql.SQL('t.{p}=s.{p}').format(p=sql.Identifier(pk)) for pk in self.schema_config.pk)
+
+        # 4) INSERT novos
+        cols_ident = sql.SQL(", ").join(map(sql.Identifier, df.columns))
         cur.execute(
-            sql.SQL("INSERT INTO {t} ({cols}) SELECT {cols_select} FROM {tmp} s WHERE NOT EXISTS (SELECT 1 FROM {t} t WHERE {join})").format(
-                t=sql.Identifier(self.table_name), cols=cols_ident_insert, cols_select=cols_ident_insert, tmp=ident_tmp, join=join_cond_insert,
+            sql.SQL(
+                "INSERT INTO {t} ({cols}) "
+                "SELECT {cols} FROM {tmp} src "
+                "WHERE NOT EXISTS ("
+                "SELECT 1 FROM {t} tgt WHERE {join}"
+                ")"
+            ).format(
+                t=sql.Identifier(self.table_name),
+                cols=cols_ident,
+                tmp=ident_tmp,
+                join=sql.SQL(" AND ").join(
+                    sql.SQL("tgt.{pk}=src.{pk}").format(pk=sql.Identifier(pk))
+                    for pk in self.schema_config.pk
+                ),
             )
         )
 
-    def save(self, df: pd.DataFrame, use_staging_threshold: int = 500) -> None:
-        if not isinstance(df, pd.DataFrame):
-            self.logger.warning("save() recebeu tipo inválido, esperado pd.DataFrame.", received_type=type(df))
-            return
+    # ═════════════ API pública ═════════════
+    def save(self, df: pd.DataFrame, *, staging_threshold: int = COPY_THRESHOLD_DEFAULT) -> None:
+        """
+        Upsert incremental (cria/migra tabela conforme necessário).
+        """
         if df.empty:
-            self.logger.info("DataFrame vazio; nada a salvar.")
-            return
-        
-        df_processed = self._optimize_dataframe(df)
-        if df_processed.empty and not df.empty :
-            self.logger.warning("DataFrame ficou vazio após otimização, nada a salvar.")
+            self.log.info("nothing-to-save")
             return
 
-        conn_mgr = get_postgres_conn()
-        with conn_mgr.connection() as conn, conn.cursor() as cur:
-            try:
-                self._create_table(cur, df_processed) 
-                self._schema_migration(cur, df_processed)
-                if len(df_processed) >= use_staging_threshold:
-                    self.logger.info("Usando _upsert_staging para salvar dados.", num_rows=len(df_processed))
-                    self._upsert_staging(conn, cur, df_processed)
-                else:
-                    self.logger.info("Usando _upsert_dynamic para salvar dados.", num_rows=len(df_processed))
-                    self._upsert_dynamic(conn, cur, df_processed)
-                for expr in self.schema_config.indexes:
-                    idx_name = f"idx_{self.table_name}_{re.sub(r'[^0-9a-zA-Z_]+', '', expr)[:40]}"
-                    cur.execute(
-                        sql.SQL("CREATE INDEX IF NOT EXISTS {i} ON {t} ({expr})").format(
-                            i=sql.Identifier(idx_name), t=sql.Identifier(self.table_name), expr=sql.SQL(expr),
-                        )
-                    )
-                conn.commit()
-                self.logger.info("Save OK.", num_registros=len(df_processed))
-            except Exception as exc:
-                self.logger.error("Erro no save(); rollback será executado pelo context manager da conexão.", error=str(exc), exc_info=True)
-                conn.rollback()
-                raise
-
-    def get_table_columns(self, cur) -> List[str]:
-        cur.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = %s",
-            (self.table_name,),
-        )
-        return [r[0] for r in cur.fetchall()]
-
-    def drop_fully_null_columns(self, protected: Optional[List[str]] = None) -> None:
-        if not self.schema_config.allow_column_dropping:
-            self.logger.info("Dropping de colunas desabilitado por SchemaConfig.")
+        df = self._optimize_dataframe(df)
+        if df.empty:
+            self.log.info("empty-after-optimize")
             return
+
         with get_postgres_conn().connection() as conn, conn.cursor() as cur:
-            cols_in_db = self.get_table_columns(cur)
-            to_keep = set(self.schema_config.pk)
-            if protected:
-                to_keep.update(protected)
-            if self.schema_config.partitioning and self.schema_config.partitioning.key:
-                to_keep.add(self.schema_config.partitioning.key)
-            
-            dropped_count = 0
-            for col_name in cols_in_db:
-                if col_name in to_keep:
-                    continue
-                try:
-                    query_check = sql.SQL("""
-                        SELECT COUNT(*) FROM {t}
-                        WHERE {c} IS NOT NULL
-                        AND (
-                            pg_typeof({c})::text NOT LIKE '%[]'
-                            OR array_length(array_remove({c}, NULL), 1) > 0
+            # 1) cria tabela / migra esquema
+            self._create_table(cur, df)
+            self._schema_migration(cur, df)
+
+            # 2) desliga índices (opcional)
+            disabled_idx: list[str] = []
+            if self.schema_config.disable_indexes_during_load and self.schema_config.indexes:
+                cur.execute("""
+                    SELECT i.indexname
+                    FROM pg_indexes i
+                    JOIN pg_class c   ON c.relname = i.indexname
+                    JOIN pg_index x   ON x.indexrelid = c.oid
+                    WHERE i.schemaname = current_schema()
+                      AND i.tablename  = %s
+                      AND x.indisprimary = FALSE
+                      AND x.indnatts = 1              -- só índice 1-col
+                      AND x.indexprs IS NULL          -- não é expression index
+                """, (self.table_name,))
+                for (idx,) in cur.fetchall():
+                    cur.execute(
+                        sql.SQL("ALTER INDEX {} SET (statistics_target = 0)").format(
+                            sql.Identifier(idx)
                         )
-                        LIMIT 1
-                    """).format(
-                        c=sql.Identifier(col_name), t=sql.Identifier(self.table_name)
                     )
-                    cur.execute(query_check)
-                    count_not_null = cur.fetchone()[0]
-                    
-                    if count_not_null == 0:
-                        self.logger.info(f"Coluna '{col_name}' está inteiramente nula ou só com arrays nulos/vazios. Removendo...")
-                        query_drop = sql.SQL('ALTER TABLE {t} DROP COLUMN {c}').format(
-                            t=sql.Identifier(self.table_name), c=sql.Identifier(col_name)
-                        )
-                        cur.execute(query_drop)
-                        dropped_count += 1
-                except Exception as e_drop_col:
-                    self.logger.error(f"Erro ao tentar verificar ou remover coluna '{col_name}'", error=str(e_drop_col), exc_info=True)
-            
-            if dropped_count > 0:
-                conn.commit()
-                self.logger.info(f"Removidas {dropped_count} colunas totalmente nulas ou só com arrays nulos/vazios da tabela '{self.table_name}'.")
+                    disabled_idx.append(idx)
+                if disabled_idx:
+                    self.log.info("idx-disabled", n=len(disabled_idx))
+
+            # 3) upsert (dynamic ou staging)
+            if len(df) >= staging_threshold:
+                self._upsert_staging(cur, df)
             else:
-                self.logger.info(f"Nenhuma coluna totalmente nula ou só com arrays nulos/vazios encontrada para remover da tabela '{self.table_name}'.")
+                self._upsert_dynamic(cur, df)
+
+            # 4) restaura índices
+            if disabled_idx:
+                for idx in disabled_idx:
+                    cur.execute(
+                        sql.SQL("ALTER INDEX {} RESET (statistics_target)").format(
+                            sql.Identifier(idx)
+                        )
+                    )
+                cur.execute(sql.SQL("REINDEX TABLE {}").format(sql.Identifier(self.table_name)))
+                self.log.info("idx-rebuilt", n=len(disabled_idx))
+
+            conn.commit()
+            self.log.info("save-ok", rows=len(df))
+
+    # ══════════ util – drop colunas totalmente nulas ══════════
+    def drop_fully_null_columns(self, *, protected: Optional[List[str]] = None) -> None:
+        """
+        Remove colunas cujo conteúdo seja exclusivamente NULL ou (no caso de arrays) arrays vazios.
+        Faz ALTER TABLE DROP COLUMN para cada coluna que não tiver dados úteis.
+        """
+        if not self.schema_config.allow_column_dropping:
+            return
+
+        with get_postgres_conn().connection() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT column_name, udt_name
+                FROM   information_schema.columns
+                WHERE  table_schema = current_schema()
+                  AND  table_name   = %s
+            """, (self.table_name,))
+            cols_meta = cur.fetchall()
+
+            keep = set(self.schema_config.pk) | set(protected or [])
+            if self.schema_config.partitioning and self.schema_config.partitioning.key:
+                keep.add(self.schema_config.partitioning.key)
+
+            dropped = 0
+            for col, udt_name in cols_meta:
+                if col in keep:
+                    continue
+
+                is_array = udt_name.startswith("_")
+                cond = (
+                    sql.SQL("cardinality({c}) > 0").format(c=sql.Identifier(col))
+                    if is_array else
+                    sql.SQL("{c} IS NOT NULL").format(c=sql.Identifier(col))
+                )
+
+                cur.execute(
+                    sql.SQL("SELECT 1 FROM {t} WHERE {cond} LIMIT 1")
+                       .format(t=sql.Identifier(self.table_name), cond=cond)
+                )
+                if not cur.fetchone():  # coluna sem dados úteis
+                    cur.execute(
+                        sql.SQL("ALTER TABLE {t} DROP COLUMN {c}")
+                           .format(t=sql.Identifier(self.table_name),
+                                   c=sql.Identifier(col))
+                    )
+                    dropped += 1
+
+            if dropped:
+                conn.commit()
+                self.log.info("cols-dropped", n=dropped)

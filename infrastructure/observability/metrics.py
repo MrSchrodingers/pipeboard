@@ -80,6 +80,21 @@ sync_counter = Counter("pipedrive_aux_sync_runs_total", "Total de auxiliary sync
 sync_failure_counter = Counter("pipedrive_aux_sync_failures_total", "Total de auxiliary syncs que falharam", ["entity_type"])
 records_synced_counter = Counter("pipedrive_aux_sync_records_synced_total", "Total de registros sincronizados", ["entity_type"])
 
+# Mede instantaneamente quantas linhas foram processadas por segundo, por flow.
+etl_throughput_rows_per_second = Gauge(
+    "pipedrive_etl_throughput_rows_per_second",
+    "Throughput do ETL em linhas por segundo (último batch)",
+    ["flow_type"]
+)
+
+# Histórico da duração do processamento de cada batch (útil para entender variações de tempo).
+etl_batch_duration_seconds = Histogram(
+    "pipedrive_etl_batch_duration_seconds",
+    "Tempo gasto para carregar cada batch de linhas no banco",
+    ["flow_type"],
+    buckets=[0.1, 0.5, 1, 2, 5, 10, 30, 60]
+)
+
 # --- Funções auxiliares ---
 def push_metrics_to_gateway(job_name="pipedrive_etl_job", grouping_key=None):
     try:

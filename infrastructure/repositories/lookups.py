@@ -12,12 +12,6 @@ DEALS_LOOKUP_MAPPINGS = {
             'value_col': 'name',
             'target_col': 'creator_user_name'
         },
-        'org_id': {
-            'source': 'organizacoes',
-            'key': 'id',
-            'value_col': 'name',
-            'target_col': 'org_name'
-        },
         'person_id': {
             'source': 'pessoas',
             'key': 'id',
@@ -25,7 +19,7 @@ DEALS_LOOKUP_MAPPINGS = {
             'target_col': 'person_name'
         },
         'stage_id': {
-            'source': 'etapas',
+            'source': 'etapas_funil',
             'key': 'id',
             'value_col': 'name',
             'target_col': 'stage_name'
@@ -92,7 +86,7 @@ PERSONS_LOOKUP_MAPPINGS = {
 
 
 STAGES_LOOKUP_MAPPINGS = {
-    'etapas': {
+    'etapas_funil': {
         'pipeline_id': {
             'source': 'pipelines',
             'key': 'id',

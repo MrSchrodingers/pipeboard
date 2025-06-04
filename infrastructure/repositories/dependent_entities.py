@@ -8,7 +8,7 @@ DEALS_DEPENDENT_ENTITIES_CONFIG = {
         "timestamp_columns": ["add_time", "update_time"]
     },
     "etapas_dependentes_deals": {
-        "table_name": "etapas",
+        "table_name": "etapas_funil",
         "timestamp_columns": ["add_time", "update_time"]
     },
     "pipelines_dependentes_deals": {

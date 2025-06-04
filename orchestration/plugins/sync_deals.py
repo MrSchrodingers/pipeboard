@@ -12,7 +12,7 @@ all_env_vars = dict(os.environ.items())
 
 trigger = DeploymentEventTrigger(
     expect={"prefect.flow-run.Completed"},
-    match_related={"prefect.resource.name": "Sync Pipedrive Leads"}
+    match_related={"prefect.resource.name": "Sync Pipedrive Persons"}
 )
 
 sync_pipedrive_deals_flow.deploy(

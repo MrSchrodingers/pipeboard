@@ -1,5 +1,4 @@
 from .sync_deals import sync_pipedrive_deals_flow
-from .sync_leads import sync_pipedrive_leads_flow
 from .sync_main import main_bi_transformation_flow
 from .sync_organizations import sync_pipedrive_organizations_flow
 from .sync_persons import sync_pipedrive_persons_flow
