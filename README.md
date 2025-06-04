@@ -190,7 +190,7 @@ Os fluxos de sincronização do Pipedrive são orquestrados pelo Prefect, seguin
 
 ```mermaid
 graph TD
-    A[Sync Pipedrive Users (Cron: 0 */4 * * *)] --> B(Sync Pipedrive Pipelines);
+    A["Sync Pipedrive Users </br>(Default: A cada 4h)"] --> B(Sync Pipedrive Pipelines);
     B --> C(Sync Pipedrive Stages);
     C --> D(Sync Pipedrive Organizations);
     D --> E(Sync Pipedrive Persons);
