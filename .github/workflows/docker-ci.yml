@@ -1,69 +1,166 @@
-# .github/workflows/docker-ci.yml
-name: Build & Deploy Docker Images
+name: Pipeboard — CI + CD 🐍🐳
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+  pull_request:
+
+env:                                         # comum a todos os jobs
+  REGISTRY: docker.io
+  IMAGE_PREFIX: mrschrodingers/pipeboard
 
 jobs:
-  build-and-push:
+# ──────────────────────────────────────────────────────────────
+# 1. LINT (código + Dockerfiles) ───────────────────────────────
+# ──────────────────────────────────────────────────────────────
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      - name: Super-Linter (pylint, black-check, etc.)
+        uses: super-linter/super-linter@v6
+        env:
+          DEFAULT_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }} 
+          VALIDATE_PYTHON_BLACK: true
+          VALIDATE_DOCKERFILE_HADOLINT: true
+          PYTHON_BLACK_CONFIG_FILE: pyproject.toml
+
+# ──────────────────────────────────────────────────────────────
+# 2. TESTES UNITÁRIOS/PyTest  ─────────────────────────────────
+# ──────────────────────────────────────────────────────────────
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: 3.12
+
+      - name: Cache Poetry env
+        uses: actions/cache@v4.2.3
+        with:
+          path: ~/.cache/pypoetry/virtualenvs
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies (poetry)
+        run: |
+          pip install --upgrade pip
+          pip install poetry
+          poetry install --only main --no-root
+
+# ──────────────────────────────────────────────────────────────
+# 3. BUILD & PUSH IMAGENS (flow + worker)  ─────────────────────
+# ──────────────────────────────────────────────────────────────
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Docker meta (gera tags latest, sha, data)
+        id: meta-flow
+        uses: crazy-max/ghaction-docker-meta@v5.7.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-flow
+          tags: |
+            type=raw,value=latest
+            type=sha
+            type=ref,event=tag
+
+      - name: Docker meta (worker)
+        id: meta-worker
+        uses: crazy-max/ghaction-docker-meta@v5.7.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker
+          tags: |
+            type=raw,value=latest
+            type=sha
+            type=ref,event=tag
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3.6.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3.10.0
 
       - name: Login to DockerHub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3.4.0
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build & push flow image
-        uses: docker/build-push-action@v4
+      - name: Build & Push FLOW image (amd64+arm64)
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: infrastructure/prefect/flow/Dockerfile.flow
           push: true
-          tags: mrschrodingers/pipeboard-flow:${{ github.sha }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta-flow.outputs.tags }}
+          labels: ${{ steps.meta-flow.outputs.labels }}
 
-      - name: Build & push worker image
-        uses: docker/build-push-action@v4
+      - name: Build & Push WORKER image (amd64+arm64)
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: infrastructure/prefect/worker/Dockerfile.worker
           push: true
-          tags: mrschrodingers/pipeboard-worker:${{ github.sha }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta-worker.outputs.tags }}
+          labels: ${{ steps.meta-worker.outputs.labels }}
 
-  deploy-prefect:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wait for Prefect Server
-        run: |
-          until curl -sf http://orion.example.com/api/health; do
-            echo "Waiting for Prefect Server..."; sleep 5;
-          done
+      - name: Trivy image vulnerability scan
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-flow:sha-${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
 
-      - name: Create/Update Blocks
-        env:
-          PREFECT_API_URL: http://orion.example.com/api
-          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          REDIS_URL: ${{ secrets.REDIS_URL }}
-          DOCKER_USER: ${{ secrets.DOCKERHUB_USER }}
-          DOCKER_PASS: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKER_REGISTRY_URL: docker.io
-        run: |
-          python docker/utils/create_or_update_core_blocks.py
+      - name: Upload Trivy report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
 
-      - name: Apply Deployments
-        env:
-          PREFECT_API_URL: http://orion.example.com/api
-          PREFECT_API_AUTH_STRING: ${{ secrets.PREFECT_SERVER_API_AUTH_STRING }}
-        run: |
-          python docker/utils/blocks_and_deployments.py
+# ──────────────────────────────────────────────────────────────
+# 4. DEPLOY (Prefect blocks + deployments)  ────────────────────
+# ──────────────────────────────────────────────────────────────
+  # deploy-prefect:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   if: github.ref == 'refs/heads/main'   # deploy só no main
+  #   env:
+  #     PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}   # ← defina nas secrets!
+  #     PREFECT_API_AUTH_STRING: ${{ secrets.PREFECT_SERVER_API_AUTH_STRING }}
+  #     GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
+  #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  #     REDIS_URL: ${{ secrets.REDIS_URL }}
+  #     DOCKER_USER: ${{ secrets.DOCKERHUB_USER }}
+  #     DOCKER_PASS: ${{ secrets.DOCKERHUB_TOKEN }}
+  #     DOCKER_REGISTRY_URL: docker.io
+
+  #   steps:
+  #     - uses: actions/checkout@v4
+
+  #     - name: Show Prefect Server health
+  #       run: |
+  #         if [ -z "$PREFECT_API_URL" ]; then
+  #           echo "::error ::PREFECT_API_URL não definido; abortando deploy."; exit 1
+  #         fi
+  #         echo "Verificando Prefect em $PREFECT_API_URL ..."
+  #         curl -sf "$PREFECT_API_URL/health" || {
+  #           echo "::error ::Prefect Server indisponível."; exit 1;
+  #         }
+
+  #     - name: Create / Update Prefect Blocks
+  #       run: python docker/utils/create_or_update_core_blocks.py
+
+  #     - name: Apply Deployments
+  #       run: python docker/utils/blocks_and_deployments.py
