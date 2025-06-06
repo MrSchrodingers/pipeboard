@@ -15,3 +15,4 @@ from .deal_fields_schema import DealField
 from .activity_field_schema import ActivityField, ActivityFieldOptions
 from .activity_schema import Activity, ActivityParticipant
 from .activity_type_schema import ActivityType
+from .deal_stage_history_schema import DealStageHistory

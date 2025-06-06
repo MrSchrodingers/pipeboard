@@ -1644,9 +1644,15 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "avg_over_time(pipedrive_etl_batch_size{job=~\"$job\", instance=~\"$instance\", flow_type=~\"$flow_type\"}[$__interval])",
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "avg by(flow_name) (avg_over_time(pipedrive_etl_batch_size{job=~\"$job\", instance=~\"$instance\", flow_type=~\"$flow_type\"}[$__interval]))",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
           "legendFormat": "{{flow_type}}",
-          "refId": "A"
+          "range": true,
+          "refId": "A",
+          "useBackend": false
         }
       ],
       "title": "ETL: Tamanho Médio de Batch",
@@ -1707,9 +1713,15 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "pipedrive_etl_throughput_rows_per_second{job=~\"$job\", instance=~\"$instance\", flow_type=~\"$flow_type\"}",
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "avg by(flow_name) (pipedrive_etl_throughput_rows_per_second{job=~\"$job\", instance=~\"$instance\", flow_type=~\"$flow_type\"})",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
           "legendFormat": "{{flow_type}}",
-          "refId": "A"
+          "range": true,
+          "refId": "A",
+          "useBackend": false
         }
       ],
       "title": "ETL: Throughput (Linhas/s - Último Batch)",
@@ -1776,13 +1788,17 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "editorMode": "code",
+          "disableTextWrap": false,
+          "editorMode": "builder",
           "exemplar": false,
-          "expr": "pipedrive_etl_process_memory_mbytes{job=~\"$job\", instance=~\"$instance\"}",
+          "expr": "max by(flow_name) (pipedrive_etl_process_memory_mbytes{job=~\"$job\", instance=~\"$instance\"})",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
           "instant": true,
           "legendFormat": "Memória {{flow_name}}",
           "range": false,
-          "refId": "A"
+          "refId": "A",
+          "useBackend": false
         }
       ],
       "title": "Recursos ETL: Uso de Memória (MB)",
@@ -1855,13 +1871,17 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "editorMode": "code",
+          "disableTextWrap": false,
+          "editorMode": "builder",
           "exemplar": false,
-          "expr": "etl_cpu_usage_percent{job=~\"$job\", instance=~\"$instance\"}",
+          "expr": "max by(flow_name) (etl_cpu_usage_percent{job=~\"$job\", instance=~\"$instance\"})",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
           "instant": true,
           "legendFormat": "CPU {{flow_name}}",
           "range": false,
-          "refId": "A"
+          "refId": "A",
+          "useBackend": false
         }
       ],
       "title": "Recursos ETL: Uso de CPU (%)",
@@ -2244,7 +2264,7 @@
           "disableTextWrap": false,
           "editorMode": "builder",
           "exemplar": false,
-          "expr": "etl_uptime_seconds{job=~\"pipedrive_etl\", instance=~\"$instance\"}",
+          "expr": "avg by(flow_name) (etl_uptime_seconds{job=~\"pipedrive_etl\", instance=~\"$instance\"})",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "instant": true,
@@ -2513,7 +2533,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-റിയൂസ്-"
+            "uid": "${DS_PROMETHEUS}"
           },
           "id": "merge",
           "options": {},
@@ -2522,7 +2542,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-റിയൂസ്-"
+            "uid": "${DS_PROMETHEUS}"
           },
           "id": "sortBy",
           "options": {
@@ -2657,7 +2677,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Pipeboard - Monitoramento (v3.2)",
-  "uid": "pipeboard-monitoring-v3-2",
-  "version": 4
+  "title": "Pipeboard - Monitoramento",
+  "uid": "pipeboard-monitoring-v1",
+  "version": 1
 }

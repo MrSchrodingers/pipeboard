@@ -105,7 +105,6 @@ def load_bi_sources() -> Dict[str, pd.DataFrame]:
             FROM pessoas
         """,
         "companies": "SELECT id, name FROM organizacoes",
-        "activities": "SELECT id, deal_id, due_date FROM atividades",
     }
 
     data: Dict[str, pd.DataFrame] = {}
@@ -167,26 +166,6 @@ def transform_and_aggregate_bi(data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         bi = bi.merge(companies, on="org_id", how="left")
     else:
         bi["company_name"] = pd.NA
-
-    # ── Activities ───────────────────────────
-    acts = data["activities"]
-    if not acts.empty and "deal_id" in acts:
-        acts["due_date"] = pd.to_datetime(acts["due_date"], errors="coerce", utc=True)
-        agg = (
-            acts.groupby("deal_id", observed=True)
-            .agg(
-                activity_count=("id", "count"),
-                last_activity_due_date=("due_date", "max"),
-            )
-            .reset_index()
-        )
-        bi = bi.merge(agg, left_on="id", right_on="deal_id", how="left")
-        bi["activity_count"] = bi["activity_count"].fillna(0).astype("Int16")
-        bi["last_activity_due_date"] = pd.to_datetime(
-            bi["last_activity_due_date"], utc=True
-        )
-    else:
-        bi[["activity_count", "last_activity_due_date"]] = [pd.NA, pd.NaT]
 
     # ── Métricas derivadas ───────────────────
     bi["add_time"] = pd.to_datetime(bi["add_time"], utc=True, errors="coerce")

@@ -15,7 +15,7 @@ class PipedriveAPIClient:
     def __init__(self, enable_compression: bool = False):
         self.api_key = settings.PIPEDRIVE_API_KEY
         self.redis_url = settings.REDIS_URL
-        
+        self._last_pagination: dict[str, Any] | None = None
         self.cache = RedisCache(connection_string=self.redis_url, enable_compression=enable_compression)
         if not self.api_key:
             log.error("PIPEDRIVE_API_KEY is missing from settings.")
@@ -27,6 +27,23 @@ class PipedriveAPIClient:
         self.routes = route_registry
 
         log.info("PipedriveAPIClient initialized", compression_enabled=enable_compression)
+
+
+
+    # ───────────────────── helper interno
+    def _store_pagination(self, pagination: dict[str, Any] | None) -> None:
+        """Guarda a última paginação observada (V1 ou V2)."""
+        if pagination is not None:
+            self._last_pagination = pagination
+
+
+    # ───────────────────── getter público
+    def get_last_pagination(self) -> dict[str, Any] | None:
+        """
+        Retorna o dicionário de paginação da última chamada feita
+        por stream_all_entities(). Pode ser None se nenhuma chamada foi feita.
+        """
+        return self._last_pagination                        
 
     def _register_api_usage(self, route_info: 'RouteInfo', calls_made: int = 1):
         logger = getattr(self, "log", structlog.get_logger(__name__))
@@ -134,6 +151,7 @@ class PipedriveAPIClient:
                     total_entities_yielded += len(page_data)
                 
                 pagination_info = response_json.get("additional_data", {}).get("pagination", {})
+                self._store_pagination(pagination_info)
                 more_items = pagination_info.get("more_items_in_collection", False)
                 
                 if more_items:
@@ -185,6 +203,7 @@ class PipedriveAPIClient:
                     total_entities_yielded += len(page_data)
 
                 additional_data_info = response_json.get("additional_data", {})
+                self._store_pagination(additional_data_info)
                 next_cursor_val = additional_data_info.get("next_cursor") 
                 
                 if not next_cursor_val: 

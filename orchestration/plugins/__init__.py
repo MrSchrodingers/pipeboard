@@ -7,5 +7,6 @@ from .sync_stages import sync_pipedrive_stages_flow
 from .sync_users import sync_pipedrive_users_flow
 from .sync_activities import sync_pipedrive_activities_flow
 from .sync_activity_types import sync_pipedrive_activity_types_flow
+from .backfill_stage_history import backfill_pipedrive_stage_history_flow
 
 print(f"Módulos de plugin em orchestration.plugins importados; deployments devem ter sido registrados.")

@@ -155,6 +155,18 @@ class RepositorioBase:
             self.log.warning("json-fail", err=str(exc), preview=str(v)[:120])
             return None
 
+    def ensure_table(self) -> None:
+        """
+        Cria (ou migra) a tabela mesmo que não existam dados a gravar.
+        Não insere nenhuma linha.
+        """
+        df_model = pd.DataFrame({c: pd.Series(dtype="object") for c in self.schema_config.pk})
+
+        with get_postgres_conn().connection() as conn, conn.cursor() as cur:
+            self._create_table(cur, df_model)
+            conn.commit()
+        self.log.info("ensure-table-ok")
+        
     def _convert_val_for_psycopg(self, v: Any, pg_type: str) -> Any:
         """
         Converte valores antes de enviar para Psycopg, lidando com JSONB, texto, NaN etc.

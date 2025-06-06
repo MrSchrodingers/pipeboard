@@ -13,5 +13,6 @@ from .utils import (
     PIPEDRIVE_TO_INTERNAL_FIELD_TYPE_MAP,
     finish_flow_metrics,
     finish_flow,
-    subset_types
+    subset_types,
 )
+from .sync_state import get_sync_state, save_sync_state

@@ -1,4 +1,3 @@
-# orchestration/flows/__init__.py
 from .sync_deals_flow import sync_pipedrive_deals_flow
 from .sync_main_flow import main_bi_transformation_flow
 from .sync_organizations_flow import sync_pipedrive_organizations_flow
@@ -8,7 +7,7 @@ from .sync_stages_flow import sync_pipedrive_stages_flow
 from .sync_users_flow import sync_pipedrive_users_flow
 from .sync_activities_flow import sync_pipedrive_activities_flow
 from .sync_activity_types_flow import sync_pipedrive_activity_types_flow
-# from .backfill_stage_history_flow import backfill_pipedrive_stage_history_flow
+from .backfill_stage_history_flow import backfill_pipedrive_stage_history_flow
 
 __all__ = [
     "sync_pipedrive_deals_flow",
@@ -21,4 +20,5 @@ __all__ = [
     "sync_pipedrive_users_flow",
     "sync_pipedrive_activities_flow",
     "sync_pipedrive_activity_types_flow",
+    "backfill_pipedrive_stage_history_flow",
 ]
