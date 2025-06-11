@@ -5,6 +5,7 @@ x-common-env: &common-env
 
 networks:
   internal:
+    external: true
     name: prefect_internal_network
 
 volumes:
