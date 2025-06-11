@@ -33,7 +33,7 @@
       "type": "grafana",
       "id": "grafana",
       "name": "Grafana",
-      "version": "12.0.0"
+      "version": "12.0.1"
     },
     {
       "type": "datasource",
@@ -80,7 +80,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1,
+  "id": null,
   "links": [],
   "panels": [
     {
@@ -491,170 +491,6 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Número total de chamadas API desde o início do contador. Para ver a taxa de chamadas, a função rate() precisaria ser usada e estar funcional.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "continuous-YlRd"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 8
-      },
-      "id": 100,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "orientation": "auto",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "12.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "sum by (endpoint) (pipedrive_api_call_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"$endpoint\"})",
-          "instant": true,
-          "legendFormat": "{{endpoint}}",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "API: Total de Chamadas por Endpoint (Cumulativo)",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Média cumulativa da latência das chamadas à API Pipedrive por endpoint. Percentis (P50, P95, P99) requerem a função rate() sobre buckets de histograma, que foi removida.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(pipedrive_api_request_duration_seconds_sum{job=~\"$job\", instance=~\"$instance\", endpoint=~\"$endpoint\"}) by (endpoint) / sum(pipedrive_api_request_duration_seconds_count{job=~\"$job\", instance=~\"$instance\", endpoint=~\"$endpoint\"}) by (endpoint)",
-          "legendFormat": "Média {{endpoint}}",
-          "refId": "A"
-        }
-      ],
-      "title": "API: Latência Média das Requisições (Cumulativa)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
       "description": "Estimativa de tokens da API Pipedrive consumidos por rota (valor total desde o início do contador).",
       "fieldConfig": {
         "defaults": {
@@ -698,7 +534,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 8
       },
       "id": 305,
       "options": {
@@ -756,7 +592,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 18
       },
       "id": 113,
       "panels": [],
@@ -837,7 +673,7 @@
         "h": 8,
         "w": 10,
         "x": 0,
-        "y": 27
+        "y": 19
       },
       "id": 302,
       "options": {
@@ -919,7 +755,7 @@
         "h": 8,
         "w": 10,
         "x": 10,
-        "y": 27
+        "y": 19
       },
       "id": 102,
       "options": {
@@ -962,77 +798,6 @@
       ],
       "title": "ETL: Total de Execuções por Fluxo (Cumulativo)",
       "type": "bargauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Estimativa de deals restantes para o processo de backfill do histórico de estágios.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "continuous-GrYlRd"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 1000
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 4,
-        "x": 20,
-        "y": 27
-      },
-      "id": 402,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "pipedrive_backfill_deals_remaining_estimated{job=~\"$job\", instance=~\"$instance\"}",
-          "legendFormat": "Deals Restantes",
-          "refId": "A"
-        }
-      ],
-      "title": "ETL: Backfill Deals Restantes",
-      "type": "stat"
     },
     {
       "datasource": {
@@ -1108,7 +873,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 27
       },
       "id": 303,
       "options": {
@@ -1185,7 +950,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 27
       },
       "id": 105,
       "options": {
@@ -1226,7 +991,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 35
       },
       "id": 410,
       "panels": [],
@@ -1298,7 +1063,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 36
       },
       "id": 411,
       "options": {
@@ -1394,7 +1159,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 44
+        "y": 36
       },
       "id": 412,
       "options": {
@@ -1474,7 +1239,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 44
+        "y": 36
       },
       "id": 413,
       "options": {
@@ -1554,7 +1319,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 52
+        "y": 44
       },
       "id": 414,
       "options": {
@@ -1617,7 +1382,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 52
+        "y": 44
       },
       "id": 415,
       "options": {
@@ -1686,7 +1451,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 52
+        "y": 44
       },
       "id": 416,
       "options": {
@@ -1763,7 +1528,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 60
+        "y": 52
       },
       "id": 417,
       "options": {
@@ -1846,7 +1611,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 60
+        "y": 52
       },
       "id": 418,
       "options": {
@@ -1915,7 +1680,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 60
+        "y": 52
       },
       "id": 419,
       "options": {
@@ -1960,7 +1725,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 68
+        "y": 60
       },
       "id": 114,
       "panels": [],
@@ -1999,7 +1764,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 69
+        "y": 61
       },
       "id": 5,
       "options": {
@@ -2049,7 +1814,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 69
       },
       "id": 115,
       "panels": [],
@@ -2109,7 +1874,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 78
+        "y": 70
       },
       "id": 109,
       "options": {
@@ -2229,7 +1994,7 @@
         "h": 8,
         "w": 16,
         "x": 8,
-        "y": 78
+        "y": 70
       },
       "id": 111,
       "options": {
@@ -2283,7 +2048,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 86
+        "y": 78
       },
       "id": 200,
       "panels": [],
@@ -2338,7 +2103,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 87
+        "y": 79
       },
       "id": 201,
       "options": {
@@ -2468,7 +2233,7 @@
         "h": 8,
         "w": 18,
         "x": 6,
-        "y": 87
+        "y": 79
       },
       "id": 202,
       "options": {
@@ -2558,9 +2323,222 @@
       ],
       "title": "API: Rate Limit Status por Endpoint",
       "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 87
+      },
+      "id": 500,
+      "panels": [],
+      "title": "Status do Processo de Backfill",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Estimativa de deals restantes para o processo de backfill do histórico de estágios.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 88
+      },
+      "id": 402,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "pipedrive_backfill_deals_remaining_estimated{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Deals Restantes",
+          "refId": "A"
+        }
+      ],
+      "title": "Backfill: Deals Restantes (Estimado)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Total de linhas de histórico de estágios salvas durante o processo de backfill (cumulativo).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "super-light-blue",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 88
+      },
+      "id": 501,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(pipedrive_backfill_stage_rows_saved_total{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "Linhas Salvas",
+          "refId": "A"
+        }
+      ],
+      "title": "Backfill: Linhas de Histórico Salvas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Total de negócios que não tiveram mudança de etapa e receberam uma linha sentinela durante o backfill (cumulativo).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-blue"
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 88
+      },
+      "id": 502,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(pipedrive_backfill_deals_without_changes_total{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "Deals Sem Alteração",
+          "refId": "A"
+        }
+      ],
+      "title": "Backfill: Deals Sem Alterações",
+      "type": "stat"
     }
   ],
-  "preload": false,
   "refresh": "5s",
   "schemaVersion": 41,
   "tags": [
@@ -2575,12 +2553,7 @@
     "list": [
       {
         "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": [
-            "$__all"
-          ]
-        },
+        "current": {},
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
@@ -2599,12 +2572,7 @@
       },
       {
         "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": [
-            "$__all"
-          ]
-        },
+        "current": {},
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
@@ -2623,12 +2591,7 @@
       },
       {
         "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": [
-            "$__all"
-          ]
-        },
+        "current": {},
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
@@ -2647,12 +2610,7 @@
       },
       {
         "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": [
-            "$__all"
-          ]
-        },
+        "current": {},
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
@@ -2677,7 +2635,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Pipeboard - Monitoramento",
-  "uid": "pipeboard-monitoring-v1",
-  "version": 1
+  "title": "Pipeboard - Monitoramentos",
+  "uid": "pipeboard-monitorings-v1",
+  "version": 2,
+  "weekStart": ""
 }

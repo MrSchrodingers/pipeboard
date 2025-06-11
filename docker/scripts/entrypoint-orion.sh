@@ -28,7 +28,7 @@ fi
 
 # Define o limite de concorrência
 echo "[INFO] Definindo limite de concorrência para o work pool '${WORK_POOL_NAME}'..."
-prefect work-pool set-concurrency-limit "${WORK_POOL_NAME}" 2
+prefect work-pool set-concurrency-limit "${WORK_POOL_NAME}" 4
 echo "[INFO] Limite de concorrência definido."
 
 # Limpar as variáveis de ambiente se não forem mais necessárias neste escopo.

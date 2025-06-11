@@ -29,6 +29,14 @@ etl_final_column_mismatch_total = Counter("etl_final_column_mismatch_total", "To
 etl_extract_failures_total = Counter("etl_extract_failures_total", "Failures during ETL extraction phase", ["flow_type"])
 etl_transform_failures_total = Counter("etl_transform_failures_total", "Failures during ETL transformation phase", ["flow_type"])
 etl_load_failures_total = Counter("etl_load_failures_total", "Failures during ETL load phase", ["flow_type"])
+backfill_stage_rows_saved = Counter(
+    "pipedrive_backfill_stage_rows_saved_total",
+    "Total de linhas de histórico de stages salvas durante o backfill",
+)
+backfill_deals_without_changes = Counter(
+    "pipedrive_backfill_deals_without_changes_total",
+    "Total de negócios que não tiveram mudança de etapa durante o backfill (linha sentinela criada)",
+)
 
 # API related
 pipedrive_api_call_total = Counter("pipedrive_api_call_total", "Total Pipedrive API calls", ["endpoint", "method", "status_code"])
