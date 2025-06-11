@@ -19,6 +19,7 @@ services:
     <<: *common-env
     networks: [internal]
     ports: ["${HOST_POSTGRES_PORT:-5432}:5432"]
+    expose: ["15432"]
     volumes:
       - pipeboard-pgdata:/var/lib/postgresql/data
     restart: on-failure
