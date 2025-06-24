@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 import pandas as pd
+import psycopg2
 import pydantic
 import structlog
 from psycopg2 import sql
@@ -540,49 +541,66 @@ class RepositorioBase:
     # ══════════ util – drop colunas totalmente nulas ══════════
     def drop_fully_null_columns(self, *, protected: Optional[List[str]] = None) -> None:
         """
-        Remove colunas cujo conteúdo seja exclusivamente NULL ou (no caso de arrays) arrays vazios.
-        Faz ALTER TABLE DROP COLUMN para cada coluna que não tiver dados úteis.
+        Remove colunas cujo conteúdo seja exclusivamente NULL ou, no
+        caso de arrays, arrays vazios.  Agora é *idempotente* e ignora
+        colunas já removidas durante o laço.
         """
         if not self.schema_config.allow_column_dropping:
             return
 
         with get_postgres_conn().connection() as conn, conn.cursor() as cur:
-            cur.execute("""
-                SELECT column_name, udt_name
-                FROM   information_schema.columns
-                WHERE  table_schema = current_schema()
-                  AND  table_name   = %s
-            """, (self.table_name,))
-            cols_meta = cur.fetchall()
-
-            keep = set(self.schema_config.pk) | set(protected or [])
-            if self.schema_config.partitioning and self.schema_config.partitioning.key:
-                keep.add(self.schema_config.partitioning.key)
-
-            dropped = 0
-            for col, udt_name in cols_meta:
-                if col in keep:
-                    continue
-
-                is_array = udt_name.startswith("_")
-                cond = (
-                    sql.SQL("cardinality({c}) > 0").format(c=sql.Identifier(col))
-                    if is_array else
-                    sql.SQL("{c} IS NOT NULL").format(c=sql.Identifier(col))
-                )
-
+            while True:  # reaproveita mesma função depois de cada modificação
                 cur.execute(
-                    sql.SQL("SELECT 1 FROM {t} WHERE {cond} LIMIT 1")
-                       .format(t=sql.Identifier(self.table_name), cond=cond)
+                    """
+                    SELECT column_name, udt_name
+                    FROM   information_schema.columns
+                    WHERE  table_schema = current_schema()
+                      AND  table_name   = %s
+                    """,
+                    (self.table_name,),
                 )
-                if not cur.fetchone():  # coluna sem dados úteis
-                    cur.execute(
-                        sql.SQL("ALTER TABLE {t} DROP COLUMN {c}")
-                           .format(t=sql.Identifier(self.table_name),
-                                   c=sql.Identifier(col))
-                    )
-                    dropped += 1
+                cols_meta = cur.fetchall()
+                if not cols_meta:
+                    return  # tabela vazia?
 
-            if dropped:
-                conn.commit()
-                self.log.info("cols-dropped", n=dropped)
+                keep = set(self.schema_config.pk) | set(protected or [])
+                if self.schema_config.partitioning and self.schema_config.partitioning.key:
+                    keep.add(self.schema_config.partitioning.key)
+
+                dropped_any = False
+                for col, udt_name in cols_meta:
+                    if col in keep:
+                        continue
+
+                    is_array = udt_name.startswith("_")
+                    cond = (
+                        sql.SQL("cardinality({c}) > 0").format(c=sql.Identifier(col))
+                        if is_array
+                        else sql.SQL("{c} IS NOT NULL").format(c=sql.Identifier(col))
+                    )
+
+                    try:
+                        cur.execute(
+                            sql.SQL("SELECT 1 FROM {t} WHERE {cond} LIMIT 1").format(
+                                t=sql.Identifier(self.table_name), cond=cond
+                            )
+                        )
+                    except psycopg2.errors.UndefinedColumn:
+                        # Coluna já foi removida em iteração anterior
+                        continue
+
+                    if not cur.fetchone():  # coluna vazia
+                        cur.execute(
+                            sql.SQL("ALTER TABLE {t} DROP COLUMN {c}").format(
+                                t=sql.Identifier(self.table_name),
+                                c=sql.Identifier(col),
+                            )
+                        )
+                        dropped_any = True
+
+                if not dropped_any:
+                    break  # nada mais para remover
+
+            conn.commit()
+            if dropped_any:
+                self.log.info("cols-dropped", n="many" if dropped_any else 0)
