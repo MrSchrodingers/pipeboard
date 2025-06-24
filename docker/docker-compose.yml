@@ -22,6 +22,10 @@ services:
       - "15432:5432"
     volumes:
       - pipeboard-pgdata:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=300"
     restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
