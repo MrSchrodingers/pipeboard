@@ -33,6 +33,7 @@ _TYPES: Dict[str, str] = {
         "address_postal_code",
         "address_country",
         "address_admin_area_level_1",
+        "custom_fields_overflow"
     )
 }
 _CORE_COLS = [
@@ -43,6 +44,7 @@ _CORE_COLS = [
     "label_ids",
     "add_time",
     "update_time",
+    "custom_fields_overflow"
 ]
 
 
@@ -99,7 +101,7 @@ def sync_pipedrive_organizations_flow() -> None:
             
         )
 
-        total = syncer.run_sync()
+        total = syncer.run_sync(updated_since=upd_since_iso)
         log.info("✔ Organizations finished – %s registros", total)
 
         # look-ups

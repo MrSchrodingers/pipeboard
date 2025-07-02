@@ -74,4 +74,5 @@ TYPES_CLEAN = {
     "won_time": "TIMESTAMP WITH TIME ZONE",
     "order_nr": "INTEGER",  
     "participants": "JSONB",
+    "custom_fields_overflow": "JSONB"
 }

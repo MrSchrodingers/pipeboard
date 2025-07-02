@@ -32,6 +32,7 @@ _TYPES: Dict[str, str] = {
     "user_id": TYPES_CLEAN["user_id"],
     "add_time": TYPES_CLEAN["add_time"],
     "update_time": TYPES_CLEAN["update_time"],
+    "custom_fields_overflow": TYPES_CLEAN["custom_fields_overflow"],
 }
 _CORE_COLS = [
     "id",
@@ -46,6 +47,7 @@ _CORE_COLS = [
     "user_id",
     "pipeline_id",
     "stage_id",
+    "custom_fields_overflow"
 ]
 
 
@@ -89,7 +91,7 @@ def sync_pipedrive_deals_flow() -> None:
             
         )
 
-        total = syncer.run_sync()
+        total = syncer.run_sync(updated_since=upd_since_iso)
         log.info("✔ Deals finished – %s registros", total)
         
         with get_postgres_conn().connection() as conn:

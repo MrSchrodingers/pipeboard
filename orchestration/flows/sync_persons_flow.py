@@ -24,7 +24,7 @@ from orchestration.common import utils
 
 
 _TYPES: Dict[str, str] = {
-    k: TYPES_CLEAN[k] for k in ("label_ids", "picture_id", "org_id", "owner_id")
+    k: TYPES_CLEAN[k] for k in ("label_ids", "picture_id", "org_id", "owner_id", "custom_fields_overflow")
 }
 _CORE_COLS = [
     "id",
@@ -37,6 +37,7 @@ _CORE_COLS = [
     "visible_to",
     "birthday",
     "job_title",
+    "custom_fields_overflow"
 ]
 _SPECIFIC = {
     "emails": {
@@ -96,7 +97,7 @@ def sync_pipedrive_persons_flow() -> None:
             
         )
 
-        total = syncer.run_sync()
+        total = syncer.run_sync(updated_since=upd_since_iso)
         log.info("✔ Persons finished – %s registros", total)
 
         with get_postgres_conn().connection() as conn:

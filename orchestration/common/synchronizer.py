@@ -42,6 +42,7 @@ _N_WORKERS            = 8                                            # validaç�
 _PG_HARD_LIMIT        = 1_600                                        # MaxTupleAttributeNumber
 _SAFETY_BUFFER        = 100                                          # reserva p/ evoluções manuais
 _MAX_AUTO_COLUMNS     = _PG_HARD_LIMIT - _SAFETY_BUFFER              # fusível dinâmico
+_OVERFLOW_COL = "custom_fields_overflow"                             # JSONB
 
 # evita recriar funções por linha
 _FN_MAP: Dict[str, Callable] = {
@@ -235,6 +236,35 @@ class PipedriveEntitySynchronizer:
             )
             (cnt,) = cur.fetchone()
             return cnt or 0
+        
+    def _prune_to_column_limit(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Garante que df só contenha colunas ‘in-table’ + slots restantes ≤1500."""
+        existing = self._get_current_column_count()          
+        remaining = _MAX_AUTO_COLUMNS - existing
+
+        # O que é *realmente* novo nesta batch
+        new_cols = [c for c in df.columns
+                    if c not in self.repository.schema_config.pk
+                    and c not in self.repository.schema_config.types
+                    and c not in self.repository.schema_config.indexes
+                    and c not in self.repository.table_name]    # quick cache
+
+        if remaining <= 0:
+            keep_new, drop_new = [], new_cols
+        else:
+            keep_new, drop_new = new_cols[:remaining], new_cols[remaining:]
+
+        if drop_new:
+            # 1. agrupa valores excedentes em JSONB
+            df[_OVERFLOW_COL] = (
+                df[drop_new]
+                .apply(lambda r: {k: r[k] for k in drop_new if pd.notna(r[k])}, axis=1)
+                .where(lambda s: s.astype(bool), None)          # vazio → NULL
+            )
+            # 2. remove as colunas proibidas
+            df.drop(columns=drop_new, inplace=True, errors="ignore")
+
+        return df
 
     # ─────────── Normalize + ordering ───────────
     def _normalize_schema(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -316,6 +346,7 @@ class PipedriveEntitySynchronizer:
                         self._apply_specific_handlers(df)
                     )
                 )
+                df = self._prune_to_column_limit(df)
             except Exception as exc:
                 self.log.error("Transform falhou no batch %s: %s", page_n, exc, exc_info=True)
                 continue
@@ -361,5 +392,6 @@ class PipedriveEntitySynchronizer:
         etl_throughput_rows_per_second.labels(flow_type=label).set(throughput)
         etl_batch_duration_seconds.labels(flow_type=label).observe(dt)
         records_processed_counter.labels(flow_type=label).inc(n_rows)
+        self._current_cols = self._get_current_column_count()
 
         self.log.info("… flushed %s rows (%s) em %.2fs → %.1f rows/s", n_rows, tag, dt, throughput)
