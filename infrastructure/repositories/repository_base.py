@@ -302,6 +302,29 @@ class RepositorioBase:
                     )
                 )
 
+    @staticmethod
+    def ensure_overflow_column(cur, table: str, col: str = "custom_fields_overflow") -> None:
+        """
+        Cria a coluna JSONB de overflow se ainda não existir.
+        Chamada sempre no começo do save/upsert.
+        """
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE  table_schema = current_schema()
+                    AND  table_name   = %s
+                    AND  column_name  = %s
+                ) THEN
+                    EXECUTE format('ALTER TABLE %I ADD COLUMN %I JSONB', %s, %s);
+                END IF;
+            END$$;
+            """,
+            (table, col, table, col),
+        )
+        
     def _schema_migration(self, cur, df: pd.DataFrame) -> None:
         # 1) colunas visíveis + tipo
         cur.execute("""
@@ -518,6 +541,7 @@ class RepositorioBase:
 
         with get_postgres_conn().connection() as conn, conn.cursor() as cur:
             # 1) cria tabela / migra esquema
+            self.ensure_overflow_column(cur, self.table_name)
             self._create_table(cur, df)
             self._schema_migration(cur, df)
 

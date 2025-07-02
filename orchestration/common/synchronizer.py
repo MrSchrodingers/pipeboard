@@ -307,9 +307,7 @@ class PipedriveEntitySynchronizer:
             else:
                 # sem slot nem coluna – descarta
                 self.log.warning(
-                    "overflow-discarded",
-                    dropped=len(drop_new),
-                    tbl=self.repository.table_name,
+                    "overflow-discarded"
                 )
 
             df.drop(columns=drop_new, inplace=True, errors="ignore")
