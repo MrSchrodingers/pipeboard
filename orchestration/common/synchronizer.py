@@ -168,6 +168,7 @@ class PipedriveEntitySynchronizer:
         )
 
         new_cols: Dict[str, pd.Series] = {}
+        cols_to_drop: list[str] = []
         for meta in self._field_meta:
             key = meta.key
             if not key or key in self._pk:
@@ -185,7 +186,11 @@ class PipedriveEntitySynchronizer:
             if fn is None:
                 continue
 
-            src = df[key] if key in df.columns else df["custom_fields"].apply(lambda d: d.get(key))
+            if key in df.columns:
+                src = df[key]
+                cols_to_drop.append(key)
+            else:
+                src = df["custom_fields"].apply(lambda d: d.get(key))
             kwargs: Dict[str, Any] = {}
             if internal == "enum":
                 kwargs["options"] = getattr(meta, "options", None)
@@ -207,6 +212,9 @@ class PipedriveEntitySynchronizer:
             except Exception as exc:
                 self.log.error("explode %s failed: %s", key, exc, exc_info=True)
 
+        if cols_to_drop:
+            df.drop(columns=cols_to_drop, inplace=True, errors="ignore")
+            
         if new_cols:
             df = df.assign(**new_cols)
             self._current_cols += len(new_cols)
