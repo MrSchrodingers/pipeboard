@@ -91,7 +91,7 @@ def sync_pipedrive_deals_flow() -> None:
             
         )
 
-        total = syncer.run_sync(updated_since=upd_since_iso)
+        total = syncer.run_sync()
         log.info("✔ Deals finished – %s registros", total)
         
         with get_postgres_conn().connection() as conn:
