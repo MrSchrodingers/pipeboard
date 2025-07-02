@@ -243,11 +243,12 @@ class PipedriveEntitySynchronizer:
         remaining = _MAX_AUTO_COLUMNS - existing
 
         # O que é *realmente* novo nesta batch
-        new_cols = [c for c in df.columns
-                    if c not in self.repository.schema_config.pk
-                    and c not in self.repository.schema_config.types
-                    and c not in self.repository.schema_config.indexes
-                    and c not in self.repository.table_name]    # quick cache
+        new_cols = [
+            c for c in df.columns
+            if c not in self.repository.schema_config.pk
+            and c not in self.repository.schema_config.types
+            and c not in self.repository.schema_config.indexes
+        ]    # quick cache
 
         if remaining <= 0:
             keep_new, drop_new = [], new_cols
