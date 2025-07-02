@@ -108,6 +108,7 @@ _PG_CAST: Dict[str, str] = {
 _HARD_LIMIT = 1_600          # MaxTupleAttributeNumber
 _BUFFER     = 100            # slots de segurança
 _CAP        = _HARD_LIMIT - _BUFFER
+_OVERFLOW = "custom_fields_overflow"
 
 # ───────────────────────── Classe principal
 class RepositorioBase:
@@ -186,6 +187,39 @@ class RepositorioBase:
         if base_type in ("TEXT", "VARCHAR", "CHAR"):
             return self._sanitize_str(str(v))
         return v
+
+    def _send_missing_to_overflow(self, cur, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Move para JSONB tudo que ainda não existe na tabela *depois* da
+        _schema_migration.
+
+        • Evita UndefinedColumn em UPDATE / INSERT
+        • Respeita o mesmo formato usado no synchronizer
+        """
+        cur.execute("""
+            SELECT column_name
+            FROM   information_schema.columns
+            WHERE  table_schema = current_schema()
+            AND    table_name   = %s
+        """, (self.table_name,))
+        in_table = {c for (c,) in cur.fetchall()}
+
+        # colunas que sobraram no DF mas não foram criadas (bateram no fusível)
+        missing = [c for c in df.columns if c not in in_table]
+
+        if not missing:
+            return df  # nada a fazer
+
+        # joga no overflow
+        df = df.copy()
+        df[_OVERFLOW] = (
+            df[missing]
+            .apply(lambda r: {k: r[k] for k in missing if pd.notna(r[k])}, axis=1)
+            .where(lambda s: s.astype(bool), None)
+        )
+        df.drop(columns=missing, inplace=True, errors="ignore")
+        self.log.info("overflow-discarded", n=len(missing))
+        return df
 
     def _get_cast_for(self, pg_type: str) -> str:
         """
@@ -532,6 +566,11 @@ class RepositorioBase:
             self._create_table(cur, df)
             self.ensure_overflow_column(cur, self.table_name)
             self._schema_migration(cur, df)
+            
+            df = self._send_missing_to_overflow(cur, df)
+            if df.empty:
+                self.log.info("empty-after-overflow")
+                return
 
             # 2) desliga índices (opcional)
             disabled_idx: list[str] = []
