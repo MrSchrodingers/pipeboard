@@ -26,6 +26,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
+from psycopg2 import sql, errors as pgerr
 
 import numpy as np
 import pandas as pd
@@ -104,10 +105,9 @@ _PG_CAST: Dict[str, str] = {
     }.items()
 }
 
-_MAX_PG_COLUMNS = 1_600          # limite físico do PostgreSQL
-_RESERVE_SLOTS  = 200            # margem para colunas manuais / futuras
-_HARD_LIMIT     = _MAX_PG_COLUMNS            # para legibilidade
-_SOFT_LIMIT     = _MAX_PG_COLUMNS - _RESERVE_SLOTS
+_HARD_LIMIT = 1_600          # MaxTupleAttributeNumber
+_BUFFER     = 100            # slots de segurança
+_CAP        = _HARD_LIMIT - _BUFFER
 
 # ───────────────────────── Classe principal
 class RepositorioBase:
@@ -303,91 +303,79 @@ class RepositorioBase:
                 )
 
     def _schema_migration(self, cur, df: pd.DataFrame) -> None:
-        """
-        ⚙️  Sincroniza o schema da tabela com o DataFrame recebido.
-
-        Passos:
-        1. Descobre colunas existentes e seus tipos (`information_schema.columns`);
-        2. Calcula 2 listas:
-            • `add_cols`   – colunas ausentes;
-            • `alter_cols` – colunas que mudaram de tipo e não estão protegidas;
-        3. Executa **um único ALTER TABLE** para todos os `ADD COLUMN`
-        (bem mais rápido) e depois altera tipos individualmente;
-        4. Nunca ultrapassa o limite duro de 1 600 colunas.
-        """
-        # ───── 1. Metadados atuais ─────
-        cur.execute(
-            """
+        # 1) colunas visíveis + tipo
+        cur.execute("""
             SELECT column_name, data_type
             FROM   information_schema.columns
             WHERE  table_schema = current_schema()
             AND  table_name   = %s
-            """,
-            (self.table_name,),
-        )
+        """, (self.table_name,))
         existing: dict[str, str] = {n: t.upper() for n, t in cur.fetchall()}
 
-        protected: set[str] = {*self.schema_config.pk}
+        # 2) total de atributos físicos (inclui dropados!)
+        cur.execute("""
+            SELECT COALESCE(MAX(attnum),0)
+            FROM   pg_attribute
+            WHERE  attrelid = %s::regclass
+        """, (self.table_name,))
+        (attr_used,) = cur.fetchone()
+        attr_used = int(attr_used)
+
+        protected = {*self.schema_config.pk}
         if (p := self.schema_config.partitioning) and p.key:
             protected.add(p.key)
 
-        # ───── 2. Delta desejado ─────
-        add_cols: list[tuple[str, str]]   = []
-        alter_cols: list[tuple[str, str]] = []
-        col_count = len(existing)
+        add_cols, alter_cols = [], []
 
         for col in df.columns:
             pg_type = self._get_pg_type(col, df[col].dtype)
 
             if col not in existing:
-                if col_count >= _SOFT_LIMIT:        # evita estourar o hard-limit
+                if attr_used >= _CAP:
+                    # sem slot físico: envia p/ overflow, não falha
                     self.log.warning(
-                        "pg-column-limit-soft (%s) – '%s' ficará no JSONB de overflow",
-                        _SOFT_LIMIT, col,
+                        "pg-cap-hit (%s/%s) – '%s' ficará em JSONB overflow",
+                        attr_used, _HARD_LIMIT, col,
                     )
                     continue
                 add_cols.append((col, pg_type))
-                col_count += 1
+                attr_used += 1
             elif col not in protected and existing[col] != pg_type:
                 alter_cols.append((col, pg_type))
 
-        if not add_cols and not alter_cols:     # early-exit
+        # nada a fazer
+        if not add_cols and not alter_cols:
             return
 
-        # ───── 3. ALTER TABLE ADD COLUMN (em lote) ─────
-        if add_cols:
-            add_stmt = sql.SQL(", ").join(
-                sql.SQL("ADD COLUMN {} {}").format(sql.Identifier(c), sql.SQL(t))
-                for c, t in add_cols
-            )
-            cur.execute(
-                sql.SQL("ALTER TABLE {} {}").format(
-                    sql.Identifier(self.table_name), add_stmt
+        # 3) ADD COLUMN em lote (tenta; se estourar, pula as sobras)
+        for col, pg_type in add_cols:
+            try:
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN {} {}")
+                    .format(sql.Identifier(self.table_name),
+                            sql.Identifier(col),
+                            sql.SQL(pg_type))
                 )
-            )
+            except pgerr.TooManyColumns:
+                self.log.warning("hard-limit atingido ao adicionar '%s' – skip", col)
+                break
+        if add_cols:
             self.log.info("schema-added-cols", n=len(add_cols))
 
-        # ───── 4. ALTER TABLE … TYPE (1×1 – pode falhar isoladamente) ─────
+        # 4) ALTER TYPE (um-a-um)
         for col, pg_type in alter_cols:
             try:
                 cur.execute(
                     sql.SQL(
-                        "ALTER TABLE {tbl} ALTER COLUMN {c} TYPE {tp} "
-                        "USING {c}::{tp}"
+                        "ALTER TABLE {t} ALTER COLUMN {c} TYPE {tp} USING {c}::{tp}"
                     ).format(
-                        tbl=sql.Identifier(self.table_name),
+                        t=sql.Identifier(self.table_name),
                         c=sql.Identifier(col),
                         tp=sql.SQL(pg_type),
                     )
                 )
-            except Exception as exc:  # noqa: BLE001
-                self.log.error(
-                    "type-migrate-fail",
-                    col=col,
-                    from_=existing[col],
-                    to=pg_type,
-                    err=str(exc),
-                )
+            except Exception as exc:
+                self.log.error("type-migrate-fail", col=col, to=pg_type, err=str(exc))
                 raise
         if alter_cols:
             self.log.info("schema-altered-cols", n=len(alter_cols))

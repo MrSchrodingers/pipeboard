@@ -238,32 +238,53 @@ class PipedriveEntitySynchronizer:
             return cnt or 0
         
     def _prune_to_column_limit(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Garante que df só contenha colunas ‘in-table’ + slots restantes ≤1500."""
-        existing = self._get_current_column_count()          
-        remaining = _MAX_AUTO_COLUMNS - existing
+        """
+        Limita o DataFrame aos slots físicos disponíveis na tabela.
 
-        # O que é *realmente* novo nesta batch
-        new_cols = [
-            c for c in df.columns
-            if c not in self.repository.schema_config.pk
-            and c not in self.repository.schema_config.types
-            and c not in self.repository.schema_config.indexes
-        ]    # quick cache
+        • Conta *todos* os atributos (pg_attribute) – inclui colunas dropadas;
+        • Redireciona o excedente para `custom_fields_overflow` (JSONB);
+        • Mantém PKs, colunas core e overrides manuais.
+        """
+        # ── 1.  Quantos slots físicos já existem?  ─────────────────────────
+        with get_postgres_conn().connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(attnum),0) "
+                "FROM   pg_attribute WHERE attrelid = %s::regclass",
+                (self.repository.table_name,),
+            )
+            (attr_used,) = cur.fetchone()
 
+        remaining = _MAX_AUTO_COLUMNS - int(attr_used)
         if remaining <= 0:
-            keep_new, drop_new = [], new_cols
-        else:
-            keep_new, drop_new = new_cols[:remaining], new_cols[remaining:]
+            remaining = 0
 
-        if drop_new:
-            # 1. agrupa valores excedentes em JSONB
+        # ── 2.  Separa colunas novas vs. já conhecidas  ────────────────────
+        known = (
+            set(self.repository.schema_config.pk)
+            | set(self.repository.schema_config.types)
+            | set(self.repository.schema_config.indexes)
+            | set(df.columns)            # colunas que já vieram de batches anteriores
+        )
+        new_cols = [c for c in df.columns if c not in known]
+
+        # ── 3.  Corta excesso e joga em JSONB  ─────────────────────────────
+        if remaining < len(new_cols):
+            keep_new, drop_new = new_cols[:remaining], new_cols[remaining:]
+            # concat: preserva ordem original
+            cols_to_keep = list(df.columns.difference(drop_new)) + keep_new
+            df = df[cols_to_keep]
+
+            # agrupa excedente
             df[_OVERFLOW_COL] = (
                 df[drop_new]
                 .apply(lambda r: {k: r[k] for k in drop_new if pd.notna(r[k])}, axis=1)
-                .where(lambda s: s.astype(bool), None)          # vazio → NULL
+                .where(lambda s: s.astype(bool), None)     # vazio → NULL
             )
-            # 2. remove as colunas proibidas
             df.drop(columns=drop_new, inplace=True, errors="ignore")
+
+            self.log.warning(
+                "overflow-jsonb", dropped=len(drop_new), remaining_slots=remaining
+            )
 
         return df
 
