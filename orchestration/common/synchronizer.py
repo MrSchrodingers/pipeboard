@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import timezone
 from typing import Any, Callable, Dict, List, Optional, Type
+from psycopg2 import sql
 
 import numpy as np
 import pandas as pd
@@ -239,13 +240,12 @@ class PipedriveEntitySynchronizer:
         
     def _prune_to_column_limit(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Limita o DataFrame aos slots físicos disponíveis na tabela.
-
-        • Conta *todos* os atributos (pg_attribute) – inclui colunas dropadas;
-        • Redireciona o excedente para `custom_fields_overflow` (JSONB);
-        • Mantém PKs, colunas core e overrides manuais.
+        Poda as colunas excedentes respeitando o hard-limit do PostgreSQL
+        (1 600).  Qualquer coluna que não “caber” é serializada para JSONB
+        em `custom_fields_overflow` *somente* se a coluna existir, caso
+        contrário é descartada com log de aviso.
         """
-        # ── 1.  Quantos slots físicos já existem?  ─────────────────────────
+        # ───── slots já consumidos (inclui dropadas) ──────────────────────
         with get_postgres_conn().connection() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT COALESCE(MAX(attnum),0) "
@@ -254,37 +254,65 @@ class PipedriveEntitySynchronizer:
             )
             (attr_used,) = cur.fetchone()
 
-        remaining = _MAX_AUTO_COLUMNS - int(attr_used)
-        if remaining <= 0:
-            remaining = 0
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE  table_schema = current_schema() "
+                "AND    table_name   = %s "
+                "AND    column_name  = %s",
+                (self.repository.table_name, _OVERFLOW_COL),
+            )
+            overflow_exists = bool(cur.fetchone())
 
-        # ── 2.  Separa colunas novas vs. já conhecidas  ────────────────────
+        remaining = _MAX_AUTO_COLUMNS - int(attr_used)
+        if overflow_exists is False and remaining > 0:
+            # reserva 1 slot para criar overflow na primeira batch que precisar
+            remaining -= 1
+            need_overflow_creation = True
+        else:
+            need_overflow_creation = False
+
+        # ───── calcula colunas novas desta batch ─────────────────────────
         known = (
             set(self.repository.schema_config.pk)
             | set(self.repository.schema_config.types)
             | set(self.repository.schema_config.indexes)
-            | set(df.columns)            # colunas que já vieram de batches anteriores
         )
         new_cols = [c for c in df.columns if c not in known]
 
-        # ── 3.  Corta excesso e joga em JSONB  ─────────────────────────────
-        if remaining < len(new_cols):
-            keep_new, drop_new = new_cols[:remaining], new_cols[remaining:]
-            # concat: preserva ordem original
-            cols_to_keep = list(df.columns.difference(drop_new)) + keep_new
-            df = df[cols_to_keep]
+        # ───── decide o que cabe ─────────────────────────────────────────
+        keep_new, drop_new = new_cols[:remaining], new_cols[remaining:]
 
-            # agrupa excedente
-            df[_OVERFLOW_COL] = (
-                df[drop_new]
-                .apply(lambda r: {k: r[k] for k in drop_new if pd.notna(r[k])}, axis=1)
-                .where(lambda s: s.astype(bool), None)     # vazio → NULL
-            )
+        if drop_new:
+            if overflow_exists:
+                # já temos a coluna – manda p/ JSONB
+                df[_OVERFLOW_COL] = (
+                    df[drop_new]
+                    .apply(lambda r: {k: r[k] for k in drop_new if pd.notna(r[k])}, axis=1)
+                    .where(lambda s: s.astype(bool), None)          # vazio → NULL
+                )
+            elif need_overflow_creation:
+                # cria Overflow na tabela agora (JSONB)
+                with get_postgres_conn().connection() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL("ALTER TABLE {} ADD COLUMN {} JSONB")
+                        .format(sql.Identifier(self.repository.table_name),
+                                sql.Identifier(_OVERFLOW_COL))
+                    )
+                self.log.info("overflow-column-added", tbl=self.repository.table_name)
+                df[_OVERFLOW_COL] = (
+                    df[drop_new]
+                    .apply(lambda r: {k: r[k] for k in drop_new if pd.notna(r[k])}, axis=1)
+                    .where(lambda s: s.astype(bool), None)
+                )
+            else:
+                # sem slot nem coluna – descarta
+                self.log.warning(
+                    "overflow-discarded",
+                    dropped=len(drop_new),
+                    tbl=self.repository.table_name,
+                )
+
             df.drop(columns=drop_new, inplace=True, errors="ignore")
-
-            self.log.warning(
-                "overflow-jsonb", dropped=len(drop_new), remaining_slots=remaining
-            )
 
         return df
 
