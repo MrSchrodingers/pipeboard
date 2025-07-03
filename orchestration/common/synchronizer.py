@@ -177,6 +177,8 @@ class PipedriveEntitySynchronizer:
                 continue
 
             slug = self._slug_by_key[key]
+            if key in self.core_columns or slug in self.core_columns:
+                continue
             # se coluna já existe na tabela → siga (será sobrescrita / migrada se preciso)
             col_already_exists = slug in df.columns or slug in self.repository.schema_config.types
             if not col_already_exists and self._current_cols + len(new_cols) >= _MAX_AUTO_COLUMNS:

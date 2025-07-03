@@ -97,7 +97,7 @@ def sync_pipedrive_persons_flow() -> None:
             
         )
 
-        total = syncer.run_sync()
+        total = syncer.run_sync(updated_since=upd_since_iso)
         log.info("✔ Persons finished – %s registros", total)
 
         with get_postgres_conn().connection() as conn:

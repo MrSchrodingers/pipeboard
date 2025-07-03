@@ -18,7 +18,7 @@ from orchestration.common import utils
 from orchestration.common.types import TYPES_CLEAN
 
 # ═════════════ Config – ajuste conforme necessidade ═════════════
-MAX_DEALS_PER_RUN   = 10_000
+MAX_DEALS_PER_RUN   = 15_000
 MAX_WORKERS         = 16                    # concorrência ↓
 REQ_DELAY_SECONDS   = 0.15                  # throttle client-side (≈6 req/s)
 BACKOFF_BASE        = 2                     # exp. back-off
@@ -133,9 +133,8 @@ def backfill_pipedrive_stage_history_flow() -> None:
                      FROM negocios_etapas_historico
                    )
             ORDER  BY COALESCE(d.{ORDER_FIELD},
-                               d.update_time,
                                d.add_time,
-                               d.close_time) DESC NULLS LAST
+                               d.update_time) DESC NULLS LAST
             LIMIT  %s
             """,
             (MAX_DEALS_PER_RUN,),
