@@ -55,6 +55,7 @@ def sync_pipedrive_stages_flow(full_refresh: bool = False) -> None:
                 allow_column_dropping=True,
             ),
         )
+        repo.ensure_table()
 
         syncer = PipedriveEntitySynchronizer(
             entity_name="Stage",

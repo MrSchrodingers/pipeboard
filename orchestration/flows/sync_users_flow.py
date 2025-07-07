@@ -73,6 +73,7 @@ def sync_pipedrive_users_flow(full_refresh: bool = False) -> None:
                 allow_column_dropping=True,
             ),
         )
+        repo.ensure_table()
 
         # 2.2 Synchronizer
         syncer = PipedriveEntitySynchronizer(

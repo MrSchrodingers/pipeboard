@@ -88,6 +88,7 @@ def sync_pipedrive_organizations_flow() -> None:
                 allow_column_dropping=True,
             ),
         )
+        repo.ensure_table()
 
         syncer = PipedriveEntitySynchronizer(
             entity_name="Organization",
