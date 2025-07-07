@@ -520,7 +520,7 @@ class RepositorioBase:
                         for c in not_pk
                     ),
                     join=sql.SQL(" AND ").join(
-                        sql.SQL("tgt.{pk}=src.{pk}").format(pk=sql.Identifier(pk))
+                        sql.SQL("tgt.{pk}::text = src.{pk}::text").format(pk=sql.Identifier(pk))
                         for pk in self.schema_config.pk
                     ),
                 )
@@ -540,7 +540,7 @@ class RepositorioBase:
                 cols=cols_ident,
                 tmp=ident_tmp,
                 join=sql.SQL(" AND ").join(
-                    sql.SQL("tgt.{pk}=src.{pk}").format(pk=sql.Identifier(pk))
+                    sql.SQL("tgt.{pk}::text = src.{pk}::text").format(pk=sql.Identifier(pk))
                     for pk in self.schema_config.pk
                 ),
             )
