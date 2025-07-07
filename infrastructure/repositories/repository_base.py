@@ -80,7 +80,7 @@ _PANDAS_TO_PG: Dict[str, str] = {
     "object": "TEXT",
     "string": "TEXT",
     "category": "TEXT",
-    "datetime64[ns]": "TIMESTAMP WITHOUT TIME ZONE",
+    "datetime64[ns]": "TIMESTAMP WITH TIME ZONE",
     "datetime64[ns, UTC]": "TIMESTAMP WITH TIME ZONE",
 }
 
@@ -98,7 +98,6 @@ _PG_CAST: Dict[str, str] = {
         "TEXT": "text",
         "VARCHAR": "varchar",
         "CHAR": "char",
-        "TIMESTAMP WITHOUT TIME ZONE": "timestamp without time zone",
         "TIMESTAMP WITH TIME ZONE": "timestamp with time zone",
         "DATE": "date",
         "TIME": "time",

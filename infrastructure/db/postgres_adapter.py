@@ -30,6 +30,8 @@ class PostgresPool:
         """
         conn = self._pool.getconn()
         try:
+            with conn.cursor() as cur:
+                cur.execute("SET TIMEZONE 'America/Sao_Paulo'")
             yield conn
         finally:
             self._pool.putconn(conn)
