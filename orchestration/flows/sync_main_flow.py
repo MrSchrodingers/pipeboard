@@ -146,6 +146,8 @@ def transform_and_aggregate_bi(data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
             )
             .drop_duplicates("person_id")
         )
+        bi["person_id"] = bi["person_id"].astype("string")
+        contacts["person_id"] = contacts["person_id"].astype("string")
         bi = bi.merge(contacts, on="person_id", how="left")
     else:
         bi[["contact_name", "contact_email", "contact_phone"]] = pd.NA

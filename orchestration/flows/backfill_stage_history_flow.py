@@ -128,13 +128,13 @@ def backfill_pipedrive_stage_history_flow() -> None:
             f"""
             SELECT d.id, d.stage_id, d.add_time
             FROM   negocios d
-            WHERE  d.id NOT IN (
-                     SELECT DISTINCT deal_id
-                     FROM negocios_etapas_historico
-                   )
+            WHERE  d.id::bigint NOT IN ( -- Adicione a conversão ::bigint aqui
+                    SELECT DISTINCT deal_id
+                    FROM   negocios_etapas_historico
+                )
             ORDER  BY COALESCE(d.{ORDER_FIELD},
-                               d.add_time,
-                               d.update_time) DESC NULLS LAST
+                            d.add_time,
+                            d.update_time) DESC NULLS LAST
             LIMIT  %s
             """,
             (MAX_DEALS_PER_RUN,),
