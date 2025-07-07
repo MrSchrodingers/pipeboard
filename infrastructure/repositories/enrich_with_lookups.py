@@ -1,4 +1,3 @@
-import psycopg2
 from psycopg2 import sql
 
 def enrich_with_lookups_sql(
@@ -18,7 +17,7 @@ def enrich_with_lookups_sql(
             src_val = cfg['value_col']
             target_col = cfg['target_col']
 
-            # Cria coluna se não existir (para não falhar)
+            # 1. Cria a coluna de destino se não existir
             cur.execute(sql.SQL(
                 "ALTER TABLE {main} ADD COLUMN IF NOT EXISTS {target} TEXT"
             ).format(
@@ -26,30 +25,29 @@ def enrich_with_lookups_sql(
                 target=sql.Identifier(target_col)
             ))
 
-            # UPDATE usando JOIN
+            # 2. Constrói e executa a consulta de UPDATE
             enrich_sql = sql.SQL(
                 """
-                UPDATE {main}
+                UPDATE {main} AS tgt
                 SET {target} = src.{src_val}
                 FROM {src_table} AS src
-                WHERE {main}.{col} = src.{src_key}
-                  AND {main}.{col} IS NOT NULL
+                WHERE tgt.{col}::text = src.{src_key}::text
                 """
             ).format(
                 main=sql.Identifier(table),
                 target=sql.Identifier(target_col),
-                src=sql.Identifier(src_table),
                 src_val=sql.Identifier(src_val),
                 src_table=sql.Identifier(src_table),
-                col=sql.Identifier(col),
-                src_key=sql.Identifier(src_key)
+                col=sql.Identifier(col),    
+                src_key=sql.Identifier(src_key) 
             )
 
             if logger:
                 logger.info(f"Enriching {table}.{target_col} using {src_table} ({col} -> {src_val})...")
 
             cur.execute(enrich_sql)
+        
         connection.commit()
+
     if logger:
         logger.info(f"SQL enrichment complete for {table}.")
-
