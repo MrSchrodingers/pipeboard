@@ -13,7 +13,7 @@ sync_pipedrive_users_flow.deploy(
     name="Sync Pipedrive Users",
     description="Sincroniza usuários (users) do Pipedrive.",
     tags=["pipedrive", "sync", "users"],
-    schedule={"cron": "0 */4 * * *", "timezone": "America/Sao_Paulo"},
+    schedule={"cron": "0 8 * * *", "timezone": "America/Sao_Paulo"},
     work_pool_name=settings.PREFECT_WORK_POOL_NAME,
     image=IMAGE_NAME,
     push=False,
