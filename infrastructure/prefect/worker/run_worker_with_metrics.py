@@ -4,7 +4,6 @@ import time
 import signal
 import structlog
 from prometheus_client import start_http_server
-from infrastructure.observability.metrics import update_uptime 
 
 log = structlog.get_logger(__name__)
 
@@ -88,7 +87,6 @@ if __name__ == "__main__":
             if worker_process_instance.poll() is not None:
                 log.error(f"Worker do Prefect encerrou inesperadamente com código {worker_process_instance.poll()}. Finalizando.")
                 break
-            update_uptime() 
             time.sleep(10)
     except KeyboardInterrupt:
         log.info("Interrupção de teclado recebida.")

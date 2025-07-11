@@ -374,14 +374,9 @@ def finish_flow_metrics(flow_name: str, start_ts: float, logger):
     except Exception:
         logger.debug("DB pool metrics unavailable", exc_info=True)
 
-    metrics.update_uptime()
     metrics.etl_heartbeat.labels(flow_type=flow_name).set_to_current_time()
 
     run_id = getattr(flow_run, "id", "unknown") or "unknown"
-    metrics.push_metrics_to_gateway(
-        job_name="pipedrive_etl",
-        grouping_key={"flow_name": flow_name, "instance": str(run_id)},
-    )
 
 
 def finish_flow(label: str, start_ts: float) -> None:

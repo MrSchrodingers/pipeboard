@@ -234,14 +234,9 @@ def main_bi_transformation_flow() -> None:
         except Exception:
             logger.debug("DB pool metrics unavailable.", exc_info=True)
 
-        metrics.update_uptime()
         metrics.etl_heartbeat.labels(flow_type=label).set_to_current_time()
 
         run_id = getattr(flow_run, "id", "unknown") or "unknown"
-        metrics.push_metrics_to_gateway(
-            job_name="pipedrive_bi_etl",
-            grouping_key={"flow_name": label, "instance": str(run_id)},
-        )
 
         # libera RAM
         del data, bi_df

@@ -2,7 +2,6 @@ from prometheus_client import start_http_server
 import time
 import os
 import structlog
-from infrastructure.observability.metrics import update_uptime
 
 log = structlog.get_logger(__name__)
 
@@ -14,7 +13,6 @@ def start_metrics_server(port: int):
         start_http_server(actual_port)
         log.info(f"Prometheus metrics server started successfully on port {actual_port}.")
         while True:
-            update_uptime()
             time.sleep(10)
     except OSError as e:
         log.error(f"Failed to start metrics server on port {actual_port}. Port likely in use.", exc_info=True)

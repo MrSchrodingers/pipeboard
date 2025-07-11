@@ -1,5 +1,3 @@
-version: '3.8'
-
 x-common-env: &common-env
   env_file: [../.env] 
 
@@ -10,8 +8,6 @@ networks:
 
 volumes:
   pipeboard-pgdata:
-  prom-data:
-  grafana-data:
 
 services:
   db:
@@ -66,9 +62,6 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
     restart: on-failure
-    labels:
-      - "prometheus.scrape=true"
-      - "prometheus.port=${CONTAINER_PREFECT_PORT:-4200}"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:${CONTAINER_PREFECT_PORT:-4200}/api/health || exit 1"]
       interval: 30s
@@ -104,50 +97,9 @@ services:
       orion: { condition: service_healthy }
       prefect-setup: { condition: service_completed_successfully }
     restart: on-failure
-    labels:
-      - "prometheus.scrape=true"
-      - "prometheus.port=${HOST_METRICS_PORT:-8082}"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'prefect worker start --pool' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
-
-  pushgateway:
-    image: prom/pushgateway:latest
-    networks: [internal]
-    expose: ["9091"]
-    ports: ["9091:9091"]
-    restart: on-failure
-
-  prometheus:
-    image: prom/prometheus:v2.52.0
-    networks: [internal]
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prom-data:/prometheus
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --web.enable-lifecycle
-    ports: ["9090:9090"]
-    restart: on-failure
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--timeout=5", "-O", "/dev/null", "http://localhost:9090/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  grafana:
-    image: grafana/grafana-oss:latest
-    <<: *common-env
-    networks: [internal]
-    ports: ["${HOST_GRAFANA_PORT:-3000}:3000"]
-    volumes: [grafana-data:/var/lib/grafana]
-    restart: on-failure
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5

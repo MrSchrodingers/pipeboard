@@ -103,17 +103,17 @@ etl_batch_duration_seconds = Histogram(
     buckets=[0.1, 0.5, 1, 2, 5, 10, 30, 60]
 )
 
-# --- Funções auxiliares ---
-def push_metrics_to_gateway(job_name="pipedrive_etl_job", grouping_key=None):
-    try:
-        push_log.info("Attempting to push metrics to Pushgateway...", address=PUSHGATEWAY_ADDRESS, job=job_name, grouping_key=grouping_key)
-        prometheus_push(gateway=PUSHGATEWAY_ADDRESS, job=job_name, registry=REGISTRY, grouping_key=grouping_key)
-        etl_pushgateway_up.labels(instance=PUSHGATEWAY_ADDRESS).set(1)
-        push_log.info("Successfully pushed metrics to Pushgateway.")
-    except Exception as e:
-        etl_pushgateway_up.labels(instance=PUSHGATEWAY_ADDRESS).set(0)
-        push_log.error("Failed to push metrics to Pushgateway", error=str(e), address=PUSHGATEWAY_ADDRESS, job=job_name, exc_info=True)
+# # --- Funções auxiliares ---
+# def push_metrics_to_gateway(job_name="pipedrive_etl_job", grouping_key=None):
+#     try:
+#         push_log.info("Attempting to push metrics to Pushgateway...", address=PUSHGATEWAY_ADDRESS, job=job_name, grouping_key=grouping_key)
+#         prometheus_push(gateway=PUSHGATEWAY_ADDRESS, job=job_name, registry=REGISTRY, grouping_key=grouping_key)
+#         etl_pushgateway_up.labels(instance=PUSHGATEWAY_ADDRESS).set(1)
+#         push_log.info("Successfully pushed metrics to Pushgateway.")
+#     except Exception as e:
+#         etl_pushgateway_up.labels(instance=PUSHGATEWAY_ADDRESS).set(0)
+#         push_log.error("Failed to push metrics to Pushgateway", error=str(e), address=PUSHGATEWAY_ADDRESS, job=job_name, exc_info=True)
 
-def update_uptime():
-    """Atualiza a métrica de uptime."""
-    etl_uptime_seconds.set(time.time() - ETL_START_TIME)
+# def update_uptime():
+#     """Atualiza a métrica de uptime."""
+#     etl_uptime_seconds.set(time.time() - ETL_START_TIME)
