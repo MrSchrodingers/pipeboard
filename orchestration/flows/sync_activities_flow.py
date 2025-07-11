@@ -158,7 +158,7 @@ def sync_pipedrive_activities_flow() -> None:
                 pydantic_model_field=ActivityField,
                 core_columns=_CORE_COLS,
             )
-            processed = syncer.run_sync(updated_since=upd_since_iso)
+            processed = syncer.run_sync()
             save_sync_state(_ENTITY, None, True)   # mantém flag done=True
 
         else:

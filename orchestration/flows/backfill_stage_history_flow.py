@@ -23,9 +23,7 @@ MAX_WORKERS         = 16                    # concorrência ↓
 REQ_DELAY_SECONDS   = 0.15                  # throttle client-side (≈6 req/s)
 BACKOFF_BASE        = 2                     # exp. back-off
 BACKOFF_MAX_SLEEP   = 30                    # máx. espera (s)
-# Coluna-chave p/ ordenar (mais recentes primeiro).  
-# Possíveis: "update_time", "add_time", "close_time"
-ORDER_FIELD         = "update_time"
+ORDER_FIELD         = "add_time"
 
 # ═════════════ Helpers ═════════════
 def _extract_stage_changes(api_items: List[Dict]) -> List[Dict]:
