@@ -18,7 +18,7 @@ from orchestration.common import utils
 from orchestration.common.types import TYPES_CLEAN
 
 # ═════════════ Config – ajuste conforme necessidade ═════════════
-MAX_DEALS_PER_RUN   = 20_000
+MAX_DEALS_PER_RUN   = 10_000
 MAX_WORKERS         = 16                    # concorrência ↓
 REQ_DELAY_SECONDS   = 0.15                  # throttle client-side (≈6 req/s)
 BACKOFF_BASE        = 2                     # exp. back-off
