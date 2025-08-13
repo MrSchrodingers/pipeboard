@@ -90,7 +90,7 @@ STAGES_LOOKUP_MAPPINGS = {
         'pipeline_id': {
             'source': 'pipelines',
             'key': 'id',
-            'value_col': 'title',
+            'value_col': 'name',
             'target_col': 'pipeline_name'
         }
     }
