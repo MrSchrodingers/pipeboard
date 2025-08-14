@@ -24,7 +24,10 @@ sync_pipedrive_activity_types_flow.deploy(
     push=False,
     triggers=[trigger],
     job_variables={
-        "env": all_env_vars,
-        "image_pull_policy": "Never"
+        "env": all_env_vars,           
+        "image_pull_policy": "Never", 
+        "stream_output": True,       
+        "auto_remove": False,       
+        "network": DOCKER_NETWORK_NAME,  
     }
 )
