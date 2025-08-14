@@ -20,7 +20,7 @@ sync_pipedrive_activities_flow.deploy(
     description="Sincroniza atividades (Activities) do Pipedrive.",
     tags=["pipedrive", "sync", "activities"],
     work_pool_name=settings.PREFECT_WORK_POOL_NAME,
-    image=IMAGE_NAME,
+    # image=IMAGE_NAME,
     push=False,
     triggers=[trigger],
     job_variables={

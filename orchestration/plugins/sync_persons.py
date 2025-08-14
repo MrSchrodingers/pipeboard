@@ -21,7 +21,7 @@ sync_pipedrive_persons_flow.deploy(
     description="Sincroniza pessoas (persons) do Pipedrive.",
     tags=["pipedrive", "sync", "persons"],
     work_pool_name=settings.PREFECT_WORK_POOL_NAME,
-    image=IMAGE_NAME,
+    # image=IMAGE_NAME,
     push=False,
     triggers=[trigger],
     job_variables={
