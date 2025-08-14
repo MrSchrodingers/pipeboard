@@ -77,7 +77,7 @@ def sync_pipedrive_deals_flow() -> None:
             SchemaConfig(
                 pk=["id"],
                 types=_TYPES,
-                indexes=["user_id", "pipeline_id", "stage_id", "status", "update_time"],
+                indexes=["user_id", "pipeline_id", "person_id", "stage_id", "status", "update_time"],
                 allow_column_dropping=True,
             ),
         )
