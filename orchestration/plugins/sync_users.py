@@ -15,7 +15,7 @@ sync_pipedrive_users_flow.deploy(
     tags=["pipedrive", "sync", "users"],
     schedule={"cron": "30 3 * * *", "timezone": "America/Sao_Paulo"},
     work_pool_name=settings.PREFECT_WORK_POOL_NAME,
-    # image=IMAGE_NAME,
+    image=IMAGE_NAME,
     push=False,
     job_variables={
         "image_pull_policy": "Never",
