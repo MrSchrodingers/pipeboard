@@ -2,9 +2,9 @@ x-common-env: &common-env
   env_file: [../.env] 
 
 networks:
-  internal:
+  proxy-global:
     external: true
-    name: prefect_internal_network
+    name: proxy-global
 
 volumes:
   pipeboard-pgdata:
@@ -13,7 +13,7 @@ services:
   db:
     image: postgres:14-alpine
     <<: *common-env
-    networks: [internal]
+    networks: [proxy-global]
     ports:
       - "15432:5432"
     volumes:
@@ -32,7 +32,7 @@ services:
   redis:
     image: redis:7-alpine
     <<: *common-env
-    networks: [internal]
+    networks: [proxy-global]
     expose: ["6379"]
     restart: on-failure
     healthcheck:
@@ -45,10 +45,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.orion
-    image: mrschrodingers/pipeboard-orion:latest 
     hostname: orion
     networks:
-      internal:
+      proxy-global:
         aliases:
           - orion
     <<: *common-env
@@ -73,9 +72,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.setup
-    image: mrschrodingers/pipeboard-setup:latest
     <<: *common-env
-    networks: [internal]
+    networks: [proxy-global]
     volumes:
       - ~/.docker/config.json:/root/.docker/config.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -87,9 +85,8 @@ services:
     build:
       context: ..
       dockerfile: infrastructure/prefect/worker/Dockerfile.worker
-    image: mrschrodingers/pipeboard-worker:latest
     <<: *common-env
-    networks: [internal]
+    networks: [proxy-global]
     volumes:
       - ~/.docker/config.json:/root/.docker/config.json:ro
       - /var/run/docker.sock:/var/run/docker.sock 
