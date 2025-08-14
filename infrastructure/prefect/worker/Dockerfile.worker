@@ -4,10 +4,12 @@ WORKDIR /app
 
 COPY pyproject.toml poetry.lock* ./
 
+RUN curl -sSL https://install.python-poetry.org | python3 -
+RUN poetry install --only main --no-ansi --no-root
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential gcc libpq-dev curl && \
     pip install --no-cache-dir "poetry>=2" "prefect-docker>=0.6" structlog && \
-    poetry --only main --without-hashes -f requirements.txt -o /tmp/reqs.txt && \
     pip install --no-cache-dir -r /tmp/reqs.txt && \
     rm -rf /var/lib/apt/lists/*
 
