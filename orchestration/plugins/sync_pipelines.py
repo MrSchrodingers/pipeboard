@@ -21,13 +21,10 @@ sync_pipedrive_pipelines_flow.deploy(
     description="Sincroniza funis (pipelines) do Pipedrive.",
     tags=["pipedrive", "sync", "pipelines"],
     work_pool_name=settings.PREFECT_WORK_POOL_NAME,
-    image=IMAGE_NAME,
+    # image=IMAGE_NAME,
     push=False,
     triggers=[trigger],
     job_variables={
-        "image_pull_policy": "Never",
-        "networks": [DOCKER_NETWORK_NAME],
-        "auto_remove": True,
         "env": all_env_vars
     }
 )

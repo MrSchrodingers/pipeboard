@@ -21,13 +21,10 @@ sync_pipedrive_organizations_flow.deploy(
     description="Sincroniza organizações (organizations) do Pipedrive.",
     tags=["pipedrive", "sync", "organizations"],
     work_pool_name=settings.PREFECT_WORK_POOL_NAME,
-    image=IMAGE_NAME,
+    # image=IMAGE_NAME,
     push=False,
     triggers=[trigger],
     job_variables={
-        "image_pull_policy": "Never",
-        "networks": [DOCKER_NETWORK_NAME],
-        "auto_remove": True,
         "env": all_env_vars
     }
 )

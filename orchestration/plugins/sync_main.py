@@ -20,13 +20,10 @@ main_bi_transformation_flow.deploy(
     description="Executa transformações nos dados sincronizados para a camada de BI.",
     tags=["pipedrive", "etl", "bi", "main"],
     work_pool_name=settings.PREFECT_WORK_POOL_NAME,
-    image=IMAGE_NAME,
+    # image=IMAGE_NAME,
     push=False,
     triggers=[trigger],
     job_variables={
-        "image_pull_policy": "Never",
-        "networks": [DOCKER_NETWORK_NAME],
-        "auto_remove": True,
         "env": all_env_vars
     }
 )
