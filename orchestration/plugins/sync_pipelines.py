@@ -26,6 +26,6 @@ sync_pipedrive_pipelines_flow.deploy(
     triggers=[trigger],
     job_variables={
         "env": all_env_vars,
-        "pull_policy": "Never"
+        "image_pull_policy": "Never"
     }
 )
