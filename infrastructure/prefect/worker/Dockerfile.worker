@@ -9,8 +9,7 @@ RUN apt-get update && \
 RUN pip install --no-cache-dir "poetry>=2" "prefect-docker>=0.6" structlog
 
 COPY pyproject.toml poetry.lock* ./
-RUN poetry export --only main --without-hashes -f requirements.txt -o /tmp/reqs.txt \
- && pip install --no-cache-dir -r /tmp/reqs.txt
+RUN poetry install --only main --no-ansi --no-root
 
 COPY . /app/
 
