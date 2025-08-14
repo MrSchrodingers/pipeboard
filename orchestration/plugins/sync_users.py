@@ -18,6 +18,7 @@ sync_pipedrive_users_flow.deploy(
     image=IMAGE_NAME,
     push=False,
     job_variables={
-        "env": all_env_vars
+        "env": all_env_vars,
+        "pull_policy": "Never"
     }
 )

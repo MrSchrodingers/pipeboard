@@ -24,6 +24,7 @@ backfill_pipedrive_stage_history_flow.deploy(
     push=False,
     triggers=[trigger],
     job_variables={
-        "env": all_env_vars
+        "env": all_env_vars,
+        "pull_policy": "Never"
     }
 )
