@@ -7,9 +7,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml poetry.lock* ./
-COPY . .
 
-RUN /opt/prefect/.venv/bin/pip install --no-cache-dir --upgrade pip \
- && /opt/prefect/.venv/bin/pip install --no-cache-dir .
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir .
+
+COPY . .
 
 ENV PYTHONPATH=/opt/prefect/app
