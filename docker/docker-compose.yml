@@ -10,7 +10,7 @@ volumes:
   pipeboard-pgdata:
 
 services:
-  db:
+  pipeboard-db:
     image: postgres:14-alpine
     <<: *common-env
     networks: [proxy-global]
@@ -58,7 +58,7 @@ services:
       - ~/.docker/config.json:/root/.docker/config.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
-      db: { condition: service_healthy }
+      pipeboard-db: { condition: service_healthy }
       redis: { condition: service_healthy }
     restart: on-failure
     healthcheck:
