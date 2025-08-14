@@ -23,6 +23,7 @@ from orchestration.common import utils
 
 _TYPES: Dict[str, str] = {
     "title": TYPES_CLEAN["title"],
+    "creator_user_id": TYPES_CLEAN["creator_user_id"],
     "value": TYPES_CLEAN["value"],
     "currency": TYPES_CLEAN["currency"],
     "status": TYPES_CLEAN["status"],
@@ -37,6 +38,7 @@ _TYPES: Dict[str, str] = {
 _CORE_COLS = [
     "id",
     "title",
+    "creator_user_id",
     "status",
     "value",
     "currency",
