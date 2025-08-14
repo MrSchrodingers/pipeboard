@@ -2,27 +2,15 @@ FROM prefecthq/prefect:3.4.1-python3.12
 
 WORKDIR /app
 
-COPY pyproject.toml poetry.lock* ./
-
-ENV PYTHONFAULTHANDLER=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=on \
-    PIP_DEFAULT_TIMEOUT=100 \
-    PYTHONPATH=/app \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_CREATE=false \
-    POETRY_HOME='/usr/local' \
-    POETRY_VERSION=2.1.1
-RUN curl -sSL https://install.python-poetry.org | python3 -
-
-COPY pyproject.toml poetry.lock* ./
-RUN poetry install --only main --no-ansi --no-root
-
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential gcc libpq-dev curl && \
-    pip install --no-cache-dir "poetry>=2" "prefect-docker>=0.6" structlog && \
-    pip install --no-cache-dir -r /tmp/reqs.txt && \
     rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir "poetry>=2" "prefect-docker>=0.6" structlog
+
+COPY pyproject.toml poetry.lock* ./
+RUN poetry export --only main --without-hashes -f requirements.txt -o /tmp/reqs.txt \
+ && pip install --no-cache-dir -r /tmp/reqs.txt
 
 COPY . /app/
 
