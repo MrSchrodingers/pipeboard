@@ -28,6 +28,6 @@ sync_pipedrive_activity_types_flow.deploy(
         "image_pull_policy": "Never", 
         "stream_output": True,       
         "auto_remove": False,       
-        "networks": DOCKER_NETWORK_NAME,  
+        "networks": [DOCKER_NETWORK_NAME],
     }
 )

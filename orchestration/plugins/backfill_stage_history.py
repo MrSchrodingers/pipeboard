@@ -20,7 +20,7 @@ backfill_pipedrive_stage_history_flow.deploy(
     description="Sincroniza histórico de estágios de negócios.",
     tags=["pipedrive", "sync", "stage-history"],
     work_pool_name=settings.PREFECT_WORK_POOL_NAME,
-    image=IMAGE_NAME,
+    image=IMAGE_NAME, 
     push=False,
     triggers=[trigger],
     job_variables={
@@ -28,6 +28,6 @@ backfill_pipedrive_stage_history_flow.deploy(
         "image_pull_policy": "Never", 
         "stream_output": True,       
         "auto_remove": False,       
-        "networks": DOCKER_NETWORK_NAME,  
+        "networks": [DOCKER_NETWORK_NAME],
     }
 )
