@@ -60,6 +60,7 @@ ORGANIZATIONS_LOOKUP_MAPPINGS = {
     'organizacoes': {
         'owner_id': {
             'source': 'usuarios',
+            'schema': 'public', 
             'key': 'id',
             'value_col': 'name',
             'target_col': 'owner_name'
