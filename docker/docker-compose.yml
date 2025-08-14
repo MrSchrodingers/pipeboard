@@ -45,7 +45,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.orion
-    image: mrschrodingers/pipeboard-orion:latest
+    image: mrschrodingers/pipeboard-orion:latest 
     hostname: orion
     networks:
       internal:

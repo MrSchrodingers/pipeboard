@@ -5,8 +5,10 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock* ./
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    pip install --no-cache-dir "prefect-docker>=0.6" structlog && \
+    apt-get install -y --no-install-recommends build-essential gcc libpq-dev curl && \
+    pip install --no-cache-dir "poetry>=2" "prefect-docker>=0.6" structlog && \
+    poetry export --only main --without-hashes -f requirements.txt -o /tmp/reqs.txt && \
+    pip install --no-cache-dir -r /tmp/reqs.txt && \
     rm -rf /var/lib/apt/lists/*
 
 COPY . /app/
