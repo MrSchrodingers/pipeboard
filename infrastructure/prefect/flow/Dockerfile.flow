@@ -3,14 +3,13 @@ FROM prefecthq/prefect:3.4.1-python3.12
 WORKDIR /opt/prefect/app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential libpq-dev gcc git curl && \
+    apt-get install -y --no-install-recommends \
+      build-essential libpq-dev gcc git curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml poetry.lock* ./
+COPY ../../.. .
 
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir .
-
-COPY . .
 
 ENV PYTHONPATH=/opt/prefect/app
