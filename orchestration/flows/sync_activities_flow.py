@@ -92,16 +92,16 @@ _CORE_COLS = [
 ]
 
 # ─────────────────────────── Task: enrichment SQL
-@task
-def _enrich_sql():
-    log = get_run_logger()
-    with get_postgres_conn().connection() as conn:
-        enrich_with_lookups_sql(
-            table="atividades",
-            lookups_mapping=ACTIVITIES_LOOKUP_MAPPINGS,
-            connection=conn,
-            logger=log,
-        )
+# @task
+# def _enrich_sql():
+#     log = get_run_logger()
+#     with get_postgres_conn().connection() as conn:
+#         enrich_with_lookups_sql(
+#             table="atividades",
+#             lookups_mapping=ACTIVITIES_LOOKUP_MAPPINGS,
+#             connection=conn,
+#             logger=log,
+#         )
 
 # ─────────────────────────── Flow
 @flow(name="Sync Pipedrive Activities")

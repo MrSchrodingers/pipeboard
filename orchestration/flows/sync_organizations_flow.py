@@ -106,13 +106,13 @@ def sync_pipedrive_organizations_flow() -> None:
         log.info("✔ Organizations finished – %s registros", total)
 
         # look-ups
-        with get_postgres_conn().connection() as conn:
-            enrich_with_lookups_sql(
-                table="organizacoes",
-                lookups_mapping=ORGANIZATIONS_LOOKUP_MAPPINGS,
-                connection=conn,
-                logger=log,
-            )
+        # with get_postgres_conn().connection() as conn:
+        #     enrich_with_lookups_sql(
+        #         table="organizacoes",
+        #         lookups_mapping=ORGANIZATIONS_LOOKUP_MAPPINGS,
+        #         connection=conn,
+        #         logger=log,
+        #     )
 
         if repo.schema_config.allow_column_dropping:
             repo.drop_fully_null_columns(protected=_CORE_COLS)

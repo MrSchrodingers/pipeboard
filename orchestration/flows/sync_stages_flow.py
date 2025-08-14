@@ -69,13 +69,13 @@ def sync_pipedrive_stages_flow(full_refresh: bool = False) -> None:
         total = syncer.run_sync(updated_since=updated_since)
         log.info("✔ Stages finished – %s registros", total)
         
-        with get_postgres_conn().connection() as conn:
-            enrich_with_lookups_sql(
-                table="etapas_funil",
-                lookups_mapping=STAGES_LOOKUP_MAPPINGS,
-                connection=conn,
-                logger=log,
-            )
+        # with get_postgres_conn().connection() as conn:
+        #     enrich_with_lookups_sql(
+        #         table="etapas_funil",
+        #         lookups_mapping=STAGES_LOOKUP_MAPPINGS,
+        #         connection=conn,
+        #         logger=log,
+        #     )
 
         if repo.schema_config.allow_column_dropping:
             repo.drop_fully_null_columns(protected=_CORE_COLS)

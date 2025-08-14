@@ -97,13 +97,13 @@ def sync_pipedrive_deals_flow() -> None:
         total = syncer.run_sync()
         log.info("✔ Deals finished – %s registros", total)
         
-        with get_postgres_conn().connection() as conn:
-            enrich_with_lookups_sql(
-                table="negocios",
-                lookups_mapping=DEALS_LOOKUP_MAPPINGS,
-                connection=conn,
-                logger=log,
-            )
+        # with get_postgres_conn().connection() as conn:
+        #     enrich_with_lookups_sql(
+        #         table="negocios",
+        #         lookups_mapping=DEALS_LOOKUP_MAPPINGS,
+        #         connection=conn,
+        #         logger=log,
+        #     )
 
         if repo.schema_config.allow_column_dropping:
             repo.drop_fully_null_columns(protected=_CORE_COLS)
