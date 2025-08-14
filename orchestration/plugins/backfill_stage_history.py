@@ -28,6 +28,6 @@ backfill_pipedrive_stage_history_flow.deploy(
         "image_pull_policy": "Never", 
         "stream_output": True,       
         "auto_remove": False,       
-        "network": DOCKER_NETWORK_NAME,  
+        "networks": DOCKER_NETWORK_NAME,  
     }
 )
