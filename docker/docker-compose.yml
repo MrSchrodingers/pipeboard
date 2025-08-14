@@ -29,7 +29,7 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
+  pipeboard-redis:
     image: redis:7-alpine
     <<: *common-env
     networks: [proxy-global]
@@ -59,7 +59,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       pipeboard-db: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      pipeboard-redis: { condition: service_healthy }
     restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:${CONTAINER_PREFECT_PORT:-4200}/api/health || exit 1"]

@@ -234,7 +234,7 @@ def sync_pipedrive_activities_flow() -> None:
         metrics.etl_last_successful_run_timestamp.labels(flow_type=label).set_to_current_time()
 
         # enrichment (assíncrono)
-        _enrich_sql.submit()
+        # _enrich_sql.submit()
 
         log.info("✔ Activities finished – %s registros", processed)
 

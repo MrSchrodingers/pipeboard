@@ -3,7 +3,12 @@ name = "Pipeboard"
 version = "1.0.0"
 description = "Integração Pipedrive+Metabase via datalake Postgres com streaming ETL com Prefect."
 authors = ["pavcob"]
-readme = ["README.md"]
+
+packages = [
+  { include = "core" },
+  { include = "infrastructure" },
+  { include = "orchestration" }
+]
 
 [tool.poetry.dependencies]
 python = ">=3.12, <3.13"
