@@ -25,7 +25,7 @@ sync_pipedrive_organizations_flow.deploy(
     push=False,
     triggers=[trigger],
     job_variables={
-        "image_pull_policy": "Always",
+        "image_pull_policy": "Never",
         "networks": [DOCKER_NETWORK_NAME],
         "auto_remove": True,
         "env": all_env_vars
